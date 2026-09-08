@@ -1,0 +1,40 @@
+<mxfile host="app.diagrams.net" agent="Claude">
+  <diagram name="Cliente - Historico e Fidelizacao" id="parte1">
+    <mxGraphModel dx="921" dy="447" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="pkg1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=12;fontStyle=0;dashed=1;strokeColor=#666666;fillColor=none;align=center;spacingTop=6;" value="Historico e Fidelizacao" vertex="1">
+          <mxGeometry height="340" width="300" x="160" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="uc1" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" value="Acompanhar Historico&#xa;de Saude Online" vertex="1">
+          <mxGeometry height="60" width="200" x="200" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="uc2" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" value="Cadastrar Pacote&#xa;Recorrente" vertex="1">
+          <mxGeometry height="60" width="200" x="200" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="uc3" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" value="Avaliar Servico" vertex="1">
+          <mxGeometry height="60" width="200" x="200" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="uc4" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" value="Registrar Historico&#xa;do Pet" vertex="1">
+          <mxGeometry height="60" width="200" x="200" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="actorCliente" parent="1" style="shape=umlActor;whiteSpace=wrap;html=1;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;verticalAlign=top;fontSize=12;fontStyle=1;strokeColor=#000000;" value="Cliente&#xa;(Tutor)" vertex="1">
+          <mxGeometry height="70" width="40" x="30" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="actorCliente" style="endArrow=classic;html=1;rounded=1;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;endFill=1;" target="uc1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="actorCliente" style="endArrow=classic;html=1;rounded=1;exitX=1;exitY=0.45;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;startArrow=none;startFill=0;endFill=1;" target="uc2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="actorCliente" style="endArrow=classic;html=1;rounded=1;exitX=1;exitY=0.6;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;endFill=1;" target="uc3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="actorCliente" style="endArrow=classic;html=1;rounded=1;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;endFill=1;" target="uc4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
