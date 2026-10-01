@@ -4,11 +4,11 @@ Esta pasta contém os documentos referentes à modelagem e à implementação do
 
 Documentos
 PetPlus_Modelagem_Banco_de_Dados.pdf: documento de levantamento e organização da modelagem do banco de dados.
-Petplus.sql:script SQL contendo a estrutura do banco de dados implementado no Microsoft SQL Server.
+Petplus.sql:script SQL contendo a estrutura do banco de dados implementado no Microsoft postgreSQL.
 
  Implementação
 
-O banco de dados foi implementado utilizando o Microsoft SQL Server Express, com o auxílio do SQL Server Management Studio (SSMS).
+O banco de dados foi implementado utilizando o  Microsoft postgreSQL, .
 
 A implementação contempla tabelas para usuários, clientes, colaboradores, pets, serviços, agendamentos, produtos, estoque, vendas, pagamentos, histórico e notificações, entre outras.
 
