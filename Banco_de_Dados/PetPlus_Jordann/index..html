@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PetPlus - Sistema Completo</title>
+<style>
+body{font-family: Arial; background:#f0fdf4; margin:0; padding:20px}
+.container{max-width:900px; margin:auto; background:white; padding:20px; border-radius:12px; box-shadow:0 4px 10px rgba(0,0,0,.1)}
+h1{text-align:center; color:#16a34a}
+.tabs{display:flex; gap:10px; margin-bottom:20px; justify-content:center}
+.tabs button{padding:10px 20px; border:none; border-radius:20px; cursor:pointer; background:#dcfce7; font-weight:bold}
+.tabs button.active{background:#16a34a; color:white}
+.form{display:none; border:1px solid #bbf7d0; padding:15px; border-radius:10px; background:#f0fdf4}
+.form.active{display:block}
+input,select{width:100%; padding:10px; margin:6px 0; border-radius:8px; border:1px solid #ccc; box-sizing:border-box}
+.btn{width:100%; padding:12px; background:#16a34a; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:bold; margin-top:10px}
+.btn:hover{background:#15803d}
+.lista{margin-top:15px; max-height:300px; overflow:auto; background:white; border-radius:8px; padding:10px}
+.item{border-bottom:1px solid #eee; padding:8px 0; font-size:14px}
+.badge{background:#16a34a; color:white; padding:2px 8px; border-radius:10px; font-size:12px}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🐾 PetPlus - PetShop Completo</h1>
+
+<div class="tabs">
+<button class="active" onclick="aba('tutor')">Tutor</button>
+<button onclick="aba('pet')">Pet</button>
+<button onclick="aba('agendamento')">Agendar</button>
+<button onclick="aba('lista')">Ver Tudo</button>
+</div>
+
+<div id="tutor" class="form active">
+<h3>Cadastrar Tutor</h3>
+<input id="t_nome" placeholder="Nome do tutor">
+<input id="t_tel" placeholder="Telefone (ex: 8699999999)">
+<input id="t_email" placeholder="Email">
+<button class="btn" onclick="cadastrarTutor()">Cadastrar Tutor</button>
+</div>
+
+<div id="pet" class="form">
+<h3>Cadastrar Pet</h3>
+<input id="p_nome" placeholder="Nome do pet (ex: Thor)">
+<input id="p_especie" placeholder="Espécie (Cachorro, Gato, Calango)">
+<input id="p_raca" placeholder="Raça">
+<input id="p_idade" type="number" placeholder="Idade">
+<input id="p_tutor" type="number" placeholder="ID do Tutor">
+<button class="btn" onclick="cadastrarPet()">Cadastrar Pet</button>
+</div>
+
+<div id="agendamento" class="form">
+<h3>Agendar Serviço</h3>
+<input id="ag_pet" type="number" placeholder="ID do Pet">
+<select id="ag_servico"></select>
+<input id="ag_data" type="date">
+<input id="ag_hora" type="time">
+<input id="ag_obs" placeholder="Observações">
+<button class="btn" onclick="agendar()">Agendar</button>
+</div>
+
+<div id="lista" class="form">
+<h3>Dados do Sistema</h3>
+<button class="btn" onclick="carregarTudo()" style="background:#0ea5e9">🔄 Atualizar Listas</button>
+<div class="lista" id="lista_tutores"></div>
+<div class="lista" id="lista_pets"></div>
+<div class="lista" id="lista_agend"></div>
+</div>
+
+</div>
+
+<script>
+const API = 'http://localhost:3000';
+function aba(id){
+ document.querySelectorAll('.form').forEach(f=>f.classList.remove('active'));
+ document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active'));
+ document.getElementById(id).classList.add('active');
+ event.target.classList.add('active');
+ if(id==='lista' || id==='agendamento') carregarTudo();
+}
+
+async function cadastrarTutor(){
+ const r = await fetch(`${API}/tutores`,{
+  method:'POST', headers:{'Content-Type':'application/json'},
+  body: JSON.stringify({nome: t_nome.value, telefone: t_tel.value, email: t_email.value})
+ });
+ const d = await r.json();
+ alert(`Tutor ${d.nome} cadastrado! ID: ${d.id}`);
+ t_nome.value=''; t_tel.value=''; t_email.value='';
+}
+
+async function cadastrarPet(){
+ const r = await fetch(`${API}/pets`,{
+  method:'POST', headers:{'Content-Type':'application/json'},
+  body: JSON.stringify({nome: p_nome.value, especie: p_especie.value, raca: p_raca.value, idade: p_idade.value, tutor_id: p_tutor.value})
+ });
+ const d = await r.json();
+ if(d.id) alert(`Pet ${d.nome} cadastrado! ID: ${d.id}`);
+ else alert('Erro: verifique ID do Tutor');
+}
+
+async function agendar(){
+ const r = await fetch(`${API}/agendamentos`,{
+  method:'POST', headers:{'Content-Type':'application/json'},
+  body: JSON.stringify({pet_id: ag_pet.value, servico_id: ag_servico.value, data_agendada: ag_data.value, hora_agendada: ag_hora.value, observacoes: ag_obs.value})
+ });
+ const d = await r.json();
+ if(d.id) alert(`Agendado! ID: ${d.id}`);
+ else alert('Erro ao agendar');
+ carregarTudo();
+}
+
+async function carregarTudo(){
+ // serviços
+ const s = await fetch(`${API}/servicos`).then(x=>x.json());
+ ag_servico.innerHTML = s.map(x=>`<option value="${x.id}">${x.nome} - R$ ${x.preco}</option>`).join('');
+
+ // tutores
+ const t = await fetch(`${API}/tutores`).then(x=>x.json());
+ lista_tutores.innerHTML = '<b>TUTORES:</b><br>' + t.map(x=>`<div class="item">#${x.id} ${x.nome} - ${x.telefone}</div>`).join('');
+
+ // pets
+ const p = await fetch(`${API}/pets`).then(x=>x.json());
+ lista_pets.innerHTML = '<b>PETS:</b><br>' + p.map(x=>`<div class="item">#${x.id} ${x.nome} (${x.especie}) - Tutor: ${x.tutor_nome} <span class="badge">TutorID ${x.tutor_id}</span></div>`).join('');
+
+ // agendamentos
+ const a = await fetch(`${API}/agendamentos`).then(x=>x.json());
+ lista_agend.innerHTML = '<b>AGENDAMENTOS:</b><br>' + a.map(x=>`<div class="item">#${x.id} ${x.pet_nome} - ${x.servico_nome} em ${x.data_agendada?.slice(0,10)} ${x.hora_agendada} - ${x.tutor_nome}</div>`).join('');
+}
+carregarTudo();
+</script>
+</body>
+</html>
