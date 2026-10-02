@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PetPlus - Sistema Completo</title>
+<style>
+:root{--verde:#16a34a;--verde-claro:#dcfce7;--fundo:#f0fdf4}
+body{font-family:'Segoe UI',Arial;margin:0;background:var(--fundo)}
+header{background:var(--verde);color:white;padding:15px 20px;display:flex;justify-content:space-between;align-items:center}
+header h1{margin:0;font-size:22px}
+.container{max-width:1100px;margin:auto;padding:20px}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+.tabs button{padding:10px 18px;border-radius:20px;border:none;cursor:pointer;font-weight:bold;background:white;box-shadow:0 2px 5px rgba(0,0,0,.1)}
+.tabs button.active{background:var(--verde);color:white}
+.card{background:white;padding:18px;border-radius:14px;box-shadow:0 4px 12px rgba(0,0,0,.08);margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.stat{background:var(--verde-claro);padding:12px;border-radius:10px;text-align:center;font-weight:bold;color:#14532d}
+input,select{width:100%;padding:10px;margin:5px 0;border-radius:8px;border:1px solid #ccc;box-sizing:border-box}
+.btn{width:100%;padding:11px;background:var(--verde);color:white;border:none;border-radius:8px;font-weight:bold;cursor:pointer}
+.btn:hover{background:#15803d}
+table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+th,td{border:1px solid #e5e7eb;padding:7px;text-align:left}
+th{background:var(--verde-claro)}
+h3{margin-top:0;color:var(--verde)}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+<h1>🐾 PetPlus - PetShop Completo</h1>
+<span>20 Tabelas | Picos-PI</span>
+</header>
+
+<div class="container">
+<div class="tabs">
+<button class="active" onclick="aba('dash')">Dashboard</button>
+<button onclick="aba('clientes')">Clientes & Pets</button>
+<button onclick="aba('agenda')">Agenda</button>
+<button onclick="aba('loja')">Loja & Serviços</button>
+<button onclick="aba('financeiro')">Financeiro</button>
+<button onclick="aba('todas')">Todas (20)</button>
+</div>
+
+<div id="dash" class="card">
+<h3>📊 Dashboard Geral</h3>
+<div class="grid" id="stats"></div>
+<div style="margin-top:15px"><button class="btn" onclick="carregarDashboard()">🔄 Atualizar Dashboard</button></div>
+</div>
+
+<div id="clientes" class="card hidden">
+<h3>👨‍👩‍👧 Clientes & Pets</h3>
+<div class="grid">
+<div><h4>Novo Cliente</h4><input id="cli_nome" placeholder="Nome completo"><input id="cli_tel" placeholder="Telefone"><input id="cli_email" placeholder="Email"><button class="btn" onclick="add('cliente',{nome:cli_nome.value,telefone:cli_tel.value,email:cli_email.value})">Salvar Cliente</button></div>
+<div><h4>Novo Pet</h4><input id="pet_nome" placeholder="Nome do pet"><input id="pet_especie" placeholder="Cachorro/Gato"><input id="pet_raca" placeholder="Raça"><input id="pet_cli" type="number" placeholder="ID Cliente"><button class="btn" onclick="add('pet',{nome:pet_nome.value,especie:pet_especie.value,raca:pet_raca.value,cliente_id:pet_cli.value})">Salvar Pet</button></div>
+</div>
+<table><thead><tr><th>Pets</th><th>Espécie</th><th>Tutor</th></tr></thead><tbody id="tb_pets"></tbody></table>
+</div>
+
+<div id="agenda" class="card hidden">
+<h3>📅 Agenda & Colaboradores</h3>
+<div class="grid">
+<div><h4>Novo Agendamento</h4><input id="ag_pet" type="number" placeholder="ID Pet"><select id="ag_serv"></select><input id="ag_data" type="date"><input id="ag_hora" type="time"><button class="btn" onclick="add('agendamento',{pet_id:ag_pet.value,servico_id:ag_serv.value,data:ag_data.value,hora:ag_hora.value})">Agendar</button></div>
+<div><h4>Colaborador</h4><input id="col_nome" placeholder="Nome"><input id="col_funcao" placeholder="Tosador/Vet"><button class="btn" onclick="add('colaborador',{nome:col_nome.value,funcao:col_funcao.value})">Salvar Colaborador</button></div>
+</div>
+<table><thead><tr><th>ID</th><th>Pet</th><th>Serviço</th><th>Data</th></tr></thead><tbody id="tb_agenda"></tbody></table>
+</div>
+
+<div id="loja" class="card hidden">
+<h3>🛒 Produtos & Serviços</h3>
+<div class="grid">
+<div><h4>Produto</h4><input id="prod_nome" placeholder="Nome produto"><input id="prod_preco" type="number" placeholder="Preço"><button class="btn" onclick="add('produto',{nome:prod_nome.value,preco:prod_preco.value})">Salvar Produto</button></div>
+<div><h4>Serviço</h4><input id="serv_nome" placeholder="Banho, Tosa..."><input id="serv_preco" type="number" placeholder="Preço"><button class="btn" onclick="add('servico',{nome:serv_nome.value,preco:serv_preco.value})">Salvar Serviço</button></div>
+</div>
+<div class="grid"><table><thead><tr><th>Produtos</th><th>Preço</th></tr></thead><tbody id="tb_prod"></tbody></table><table><thead><tr><th>Serviços</th><th>Preço</th></tr></thead><tbody id="tb_serv"></tbody></table></div>
+</div>
+
+<div id="financeiro" class="card hidden">
+<h3>💰 Financeiro</h3>
+<div class="grid">
+<div><h4>Nova Venda</h4><input id="v_cliente" type="number" placeholder="ID Cliente"><input id="v_total" type="number" placeholder="Total"><button class="btn" onclick="add('venda',{cliente_id:v_cliente.value,total:v_total.value})">Lançar Venda</button></div>
+<div><h4>Pagamento</h4><input id="pg_venda" type="number" placeholder="ID Venda"><select id="pg_forma"><option>PIX</option><option>Dinheiro</option><option>Cartão</option></select><input id="pg_valor" type="number" placeholder="Valor"><button class="btn" onclick="add('pagamento',{venda_id:pg_venda.value,forma_pagamento:pg_forma.value,valor:pg_valor.value})">Registrar Pagamento</button></div>
+</div>
+<table><thead><tr><th>Venda</th><th>Cliente</th><th>Total</th></tr></thead><tbody id="tb_venda"></tbody></table>
+</div>
+
+<div id="todas" class="card hidden">
+<h3>🗃️ Todas as 20 Tabelas</h3>
+<select id="selTabela" onchange="carregarTabela()"></select>
+<div id="formDinamico" style="background:var(--fundo);padding:10px;border-radius:8px;margin-top:10px"><div id="campos"></div><button class="btn" onclick="salvarDinamico()">Salvar</button></div>
+<table><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+</div>
+
+</div>
+<script>
+const API='http://localhost:3000';
+function aba(id){
+ document.querySelectorAll('.card').forEach(c=>c.classList.add('hidden'));
+ document.getElementById(id).classList.remove('hidden');
+ document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active'));
+ event.target.classList.add('active');
+ if(id==='dash') carregarDashboard();
+ if(id==='clientes') carregarClientesPets();
+ if(id==='agenda') carregarAgenda();
+ if(id==='loja') carregarLoja();
+ if(id==='financeiro') carregarFinanceiro();
+ if(id==='todas') initTodas();
+}
+async function add(tabela, obj){
+ const r = await fetch(`${API}/api/${tabela}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)}).then(x=>x.json());
+ if(r.erro) alert('Erro: '+r.erro+'\nDica: verifique se os nomes das colunas estão certos. Tente pela aba Todas para ver colunas exatas.');
+ else {alert('Salvo! ID '+ (r.id||'')); carregarDashboard();}
+}
+async function carregarDashboard(){
+ const tabs = await fetch(`${API}/tabelas`).then(r=>r.json());
+ let html=''; let count=0;
+ for(let t of tabs){
+   try{ const d = await fetch(`${API}/api/${t}`).then(r=>r.json()); html+=`<div class="stat">${t}<br><span style="font-size:22px">${d.length}</span></div>`; count+=d.length; }catch(e){}
+ }
+ document.getElementById('stats').innerHTML = html + `<div class="stat" style="background:#16a34a;color:white">TOTAL REGISTROS<br><span style="font-size:22px">${count}</span></div>`;
+}
+async function carregarClientesPets(){
+ try{
+  const d = await fetch(`${API}/pets-com-tutor`).then(r=>r.json());
+  tb_pets.innerHTML = d.map(x=>`<tr><td>${x.nome}</td><td>${x.especie||'-'}</td><td>${x.tutor_nome||'ID '+x.cliente_id}</td></tr>`).join('') || '<tr><td colspan=3>vazio</td></tr>';
+ }catch(e){tb_pets.innerHTML='<tr><td>erro - use aba Todas</td></tr>'}
+}
+async function carregarAgenda(){
+ try{
+  const serv = await fetch(`${API}/api/servico`).then(r=>r.json());
+  ag_serv.innerHTML = serv.map(s=>`<option value="${s.id}">${s.nome} R$ ${s.preco||''}</option>`).join('');
+  const ag = await fetch(`${API}/api/agendamento`).then(r=>r.json());
+  tb_agenda.innerHTML = ag.map(a=>`<tr><td>${a.id}</td><td>${a.pet_id}</td><td>${a.servico_id}</td><td>${a.data||''} ${a.hora||''}</td></tr>`).join('') || '<tr><td colspan=4>vazio</td></tr>';
+ }catch(e){}
+}
+async function carregarLoja(){
+ try{
+  const p = await fetch(`${API}/api/produto`).then(r=>r.json());
+  const s = await fetch(`${API}/api/servico`).then(r=>r.json());
+  tb_prod.innerHTML = p.map(x=>`<tr><td>${x.nome}</td><td>R$ ${x.preco||'-'}</td></tr>`).join('');
+  tb_serv.innerHTML = s.map(x=>`<tr><td>${x.nome}</td><td>R$ ${x.preco||'-'}</td></tr>`).join('');
+ }catch(e){}
+}
+async function carregarFinanceiro(){
+ try{
+  const v = await fetch(`${API}/api/venda`).then(r=>r.json());
+  tb_venda.innerHTML = v.map(x=>`<tr><td>#${x.id}</td><td>${x.cliente_id}</td><td>R$ ${x.total||'-'}</td></tr>`).join('') || '<tr><td colspan=3>vazio</td></tr>';
+ }catch(e){}
+}
+async function initTodas(){
+ const tabs = await fetch(`${API}/tabelas`).then(r=>r.json());
+ selTabela.innerHTML = `<option value="">-- Escolha uma das ${tabs.length} --</option>` + tabs.map(t=>`<option value="${t}">${t}</option>`).join('');
+}
+async function carregarTabela(){
+ const t = selTabela.value; if(!t) return;
+ const dados = await fetch(`${API}/api/${t}`).then(r=>r.json());
+ if(!dados.length){ thead.innerHTML=''; tbody.innerHTML='<tr><td>Tabela vazia, cadastre o primeiro abaixo</td></tr>'; campos.innerHTML='<input id="f_teste" placeholder="coluna">'; return; }
+ const colunas = Object.keys(dados[0]);
+ thead.innerHTML = '<tr>'+colunas.map(c=>`<th>${c}</th>`).join('')+'</tr>';
+ tbody.innerHTML = dados.slice(0,20).map(l=>'<tr>'+colunas.map(c=>`<td>${l[c]}</td>`).join('')+'</tr>').join('');
+ campos.innerHTML = colunas.filter(c=>c!=='id').map(c=>`<input id="f_${c}" placeholder="${c}">`).join('');
+}
+async function salvarDinamico(){
+ const t = selTabela.value; let obj={};
+ document.querySelectorAll('#campos input').forEach(i=>{ if(i.value) obj[i.id.replace('f_','')]=i.value; });
+ const r = await fetch(`${API}/api/${t}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)}).then(x=>x.json());
+ alert(r.erro? 'Erro: '+r.erro : 'Salvo!'); carregarTabela(); carregarDashboard();
+}
+carregarDashboard();
+initTodas();
+</script>
+</body>
+</html>
