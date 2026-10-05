@@ -1,0 +1,33 @@
+{
+  "name": "petplus-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "API mínima do PetPlus — serving layer sobre o PostgreSQL normalizado. Estrutura em camadas (routes → services → repositories) para que o backend robusto seja construído por cima sem refatoração.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node scripts/migrate.js",
+    "seed": "node scripts/seed.js",
+    "reset": "node scripts/reset.js && node scripts/migrate.js && node scripts/seed.js",
+    "test:db": "node scripts/test-db.js",
+    "smoke": "node scripts/smoke-test.js",
+    "e2e": "node scripts/e2e-front.js",
+    "verificar": "npm run reset && node scripts/test-db.js && node scripts/smoke-test.js && node scripts/e2e-front.js",
+    "dicionario": "node scripts/gerar-dicionario.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.10.0"
+  }
+}

@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
 import { brl, fmtDate, getFornecedor } from '../../utils'
 import { Modal, ConfirmDialog, useToast, EmptyState, Field } from '../../ui'
 import type { Produto } from '../../types'
@@ -13,6 +14,12 @@ export default function Estoque() {
   const [entrada, setEntrada] = useState<Produto | null>(null)
   const [qtdEntrada, setQtdEntrada] = useState('10')
   const [excluir, setExcluir] = useState<Produto | null>(null)
+
+  /** Recarrega do banco e refleta na tabela local. */
+  const recarregar = async () => {
+    await sincronizar()
+    setProds([...db.produtos])
+  }
 
   const diasAte = (validade: string) => {
     if (!validade) return Infinity
@@ -102,12 +109,19 @@ export default function Estoque() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setEntrada(null)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={() => {
+              <button className="btn btn-primary" onClick={async () => {
                 const q = Number(qtdEntrada)
                 if (!q || q <= 0) { toast('Informe uma quantidade válida.', 'err'); return }
-                setProds(ps => ps.map(p => p.id === entrada.id ? { ...p, quantidadeEstoque: p.quantidadeEstoque + q } : p))
-                setEntrada(null)
-                toast(`+${q} un. adicionadas ao estoque de ${entrada.nome}.`, 'ok')
+                try {
+                  // A entrada vira uma MOVIMENTAÇÃO de estoque no banco; o
+                  // saldo é recalculado pelo gatilho, não somado na tela.
+                  await api.produtos.entrada(entrada.id, q, 'Entrada pela tela de Estoque')
+                  await recarregar()
+                  setEntrada(null)
+                  toast(`+${q} un. adicionadas ao estoque de ${entrada.nome}.`, 'ok')
+                } catch (err) {
+                  toast(err instanceof ApiError ? err.message : 'Não foi possível registrar a entrada.', 'err')
+                }
               }}>Confirmar entrada</button>
             </>
           }>
@@ -124,9 +138,20 @@ export default function Estoque() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setEdit(null)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={() => {
-                setProds(ps => ps.map(p => p.id === edit.id ? edit : p))
-                setEdit(null); toast('Produto atualizado.', 'ok')
+              <button className="btn btn-primary" onClick={async () => {
+                try {
+                  await api.produtos.atualizar(edit.id, {
+                    nome: edit.nome,
+                    categoria: edit.categoria,
+                    preco: edit.preco,
+                    estoqueMinimo: edit.estoqueMinimo,
+                    validade: edit.validade,
+                  })
+                  await recarregar()
+                  setEdit(null); toast('Produto atualizado no banco.', 'ok')
+                } catch (err) {
+                  toast(err instanceof ApiError ? err.message : 'Não foi possível salvar.', 'err')
+                }
               }}>Salvar</button>
             </>
           }>
@@ -136,6 +161,9 @@ export default function Estoque() {
             <Field label="Preço (R$)"><input type="number" step="0.01" value={edit.preco} onChange={e => setEdit({ ...edit, preco: Number(e.target.value) })} /></Field>
             <Field label="Quantidade em estoque"><input type="number" value={edit.quantidadeEstoque} onChange={e => setEdit({ ...edit, quantidadeEstoque: Number(e.target.value) })} /></Field>
             <Field label="Estoque mínimo"><input type="number" value={edit.estoqueMinimo} onChange={e => setEdit({ ...edit, estoqueMinimo: Number(e.target.value) })} /></Field>
+            <div className="alert info mt-12" style={{ gridColumn: '1 / -1' }}>
+              O saldo atual ({edit.quantidadeEstoque} un.) é controlado pelo histórico de movimentações e não é editável aqui — use <b>Entrada</b> para alterar o estoque.
+            </div>
             <Field label="Validade"><input type="date" value={edit.validade} onChange={e => setEdit({ ...edit, validade: e.target.value })} /></Field>
             <Field label="Fornecedor">
               <select value={edit.fornecedorId} onChange={e => setEdit({ ...edit, fornecedorId: Number(e.target.value) })}>
@@ -151,39 +179,66 @@ export default function Estoque() {
           message={`O produto ${excluir.nome} será removido do catálogo. O histórico de vendas anteriores é preservado (RN03 — somente Gestor).`}
           confirmLabel="Excluir"
           onCancel={() => setExcluir(null)}
-          onConfirm={() => {
-            setProds(ps => ps.filter(p => p.id !== excluir.id))
-            setExcluir(null); toast('Produto excluído.', 'ok')
+          onConfirm={async () => {
+            try {
+              await api.produtos.remover(excluir.id)
+              await recarregar()
+              setExcluir(null); toast('Produto excluído (inativação lógica — histórico preservado).', 'ok')
+            } catch (err) {
+              toast(err instanceof ApiError ? err.message : 'Não foi possível excluir.', 'err')
+            }
           }} />
       )}
 
-      {novoOpen && <NovoProdutoModal onClose={() => setNovoOpen(false)} onCriar={(p) => {
-        setProds(ps => [...ps, p])
-        setNovoOpen(false)
-        toast(`Produto ${p.nome} cadastrado (UC08).`, 'ok')
+      {novoOpen && <NovoProdutoModal onClose={() => setNovoOpen(false)} onCriar={async (p) => {
+        try {
+          await api.produtos.criar({
+            nome: p.nome,
+            categoria: p.categoria,
+            preco: p.preco,
+            estoqueMinimo: p.estoqueMinimo,
+            quantidadeInicial: p.quantidadeEstoque,
+            validade: p.validade || undefined,
+            fornecedorId: p.fornecedorId,
+          })
+          await recarregar()
+          setNovoOpen(false)
+          toast(`Produto ${p.nome} cadastrado no banco (UC08).`, 'ok')
+        } catch (err) {
+          toast(err instanceof ApiError ? err.message : 'Não foi possível cadastrar o produto.', 'err')
+          throw err
+        }
       }} />}
     </div>
   )
 }
 
-function NovoProdutoModal({ onClose, onCriar }: { onClose: () => void; onCriar: (p: Produto) => void }) {
+function NovoProdutoModal({ onClose, onCriar }: { onClose: () => void; onCriar: (p: Produto) => Promise<void> }) {
   const [nome, setNome] = useState(''); const [categoria, setCategoria] = useState('Alimentos'); const [qtd, setQtd] = useState('10')
   const [min, setMin] = useState('5'); const [validade, setValidade] = useState(''); const [preco, setPreco] = useState(''); const [forn, setForn] = useState('1')
   const [erro, setErro] = useState('')
+  const [salvando, setSalvando] = useState(false)
   return (
     <Modal title="Novo produto (UC08)" onClose={onClose}
       footer={
         <>
           <button className="btn btn-outline" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" onClick={() => {
+          <button className="btn btn-primary" disabled={salvando} onClick={async () => {
             if (!nome || !preco) { setErro('Preencha nome e preço do produto.'); return }
-            onCriar({
-              id: Math.max(...db.produtos.map(p => p.id)) + 1,
-              nome, categoria,
-              quantidadeEstoque: Number(qtd), estoqueMinimo: Number(min),
-              validade, preco: Number(preco), fornecedorId: Number(forn),
-            })
-          }}>✓ Cadastrar produto</button>
+            setSalvando(true)
+            setErro('')
+            try {
+              // `id` é gerado pelo banco; o formulário manda só os atributos.
+              await onCriar({
+                id: 0,
+                nome, categoria,
+                quantidadeEstoque: Number(qtd), estoqueMinimo: Number(min),
+                validade, preco: Number(preco), fornecedorId: Number(forn),
+              })
+            } catch {
+              setSalvando(false)
+            }
+          }}>{salvando ? 'Salvando…' : '✓ Cadastrar produto'}</button>
         </>
       }>
       {erro && <div className="alert danger">{erro}</div>}

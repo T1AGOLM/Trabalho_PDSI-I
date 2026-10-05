@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
 import { brl, fmtDateTime, getProduto } from '../../utils'
 import { Modal, useToast, EmptyState, Field } from '../../ui'
 import type { Venda, ItemVenda, Pagamento, FormaPagamento, Produto } from '../../types'
@@ -16,22 +17,40 @@ export default function PDV() {
   const [clienteId, setClienteId] = useState('1')
   const [comprovante, setComprovante] = useState<Venda | null>(null)
   const [prods, setProds] = useState<Produto[]>([...db.produtos])
+  const [finalizando, setFinalizando] = useState(false)
 
   const total = itens.reduce((s, i) => s + i.quantidade * i.precoUnitario, 0)
   const totalPago = pagamentos.reduce((s, p) => s + p.valor, 0)
   const faltaPagar = Math.max(0, total - totalPago)
 
+  // Toda a lógica vive DENTRO do updater funcional.
+  //
+  // Calcular `existente` fora dele (a partir de `itens`) lê um estado
+  // obsoleto: dois cliques rápidos no mesmo produto — ou o duplo
+  // processamento do StrictMode em desenvolvimento — fariam os dois
+  // caminho entrarem no ramo "não existe" e duplicar a linha do carrinho.
   const addItem = (produto: Produto) => {
-    const existente = itens.find(i => i.produtoId === produto.id)
-    const qtdAtual = existente?.quantidade ?? 0
-    if (qtdAtual + 1 > produto.quantidadeEstoque) {
+    let semSaldo = false
+
+    setItens(is => {
+      const existente = is.find(i => i.produtoId === produto.id)
+      const novaQtd = (existente?.quantidade ?? 0) + 1
+
+      if (novaQtd > produto.quantidadeEstoque) {
+        semSaldo = true
+        return is
+      }
+      if (existente) {
+        return is.map(i => (i.produtoId === produto.id ? { ...i, quantidade: novaQtd } : i))
+      }
+      return [...is, {
+        produtoId: produto.id, nome: produto.nome,
+        quantidade: 1, precoUnitario: produto.preco,
+      }]
+    })
+
+    if (semSaldo) {
       toast(`Estoque insuficiente para ${produto.nome} (RN02): apenas ${produto.quantidadeEstoque} un. disponíveis.`, 'err')
-      return
-    }
-    if (existente) {
-      setItens(is => is.map(i => i.produtoId === produto.id ? { ...i, quantidade: i.quantidade + 1 } : i))
-    } else {
-      setItens(is => [...is, { produtoId: produto.id, nome: produto.nome, quantidade: 1, precoUnitario: produto.preco }])
     }
   }
 
@@ -62,22 +81,45 @@ export default function PDV() {
     setValorForma('')
   }
 
-  const finalizar = () => {
+  const finalizar = async () => {
     if (itens.length === 0) { toast('Adicione pelo menos um item à venda.', 'err'); return }
     if (faltaPagar > 0.001) { toast('Pagamento incompleto: adicione outra forma de pagamento (RF25 — pagamento combinado).', 'err'); return }
-    // baixa de estoque (UC09)
-    setProds(ps => ps.map(p => {
-      const item = itens.find(i => i.produtoId === p.id)
-      return item ? { ...p, quantidadeEstoque: Math.max(0, p.quantidadeEstoque - item.quantidade) } : p
-    }))
-    const venda: Venda = {
-      id: 1006,
-      dataHora: `${HOJE}T${new Date().toTimeString().slice(0, 5)}`,
-      clienteId: Number(clienteId),
-      itens, pagamentos, valorTotal: total, status: 'finalizada',
+
+    setFinalizando(true)
+    try {
+      // Gravação real no banco: venda + itens + pagamentos + baixa de
+      // estoque, tudo numa transação. O saldo devolvido é o do PostgreSQL,
+      // não um cálculo feito na tela.
+      const r = await api.vendas.registrar({
+        clienteId: clienteId === '0' ? null : Number(clienteId),
+        itens: itens
+          .filter(i => i.produtoId > 0)
+          .map(i => ({ produtoId: i.produtoId, quantidade: i.quantidade, precoUnitario: i.precoUnitario })),
+        pagamentos: pagamentos.map(p => ({ formaPagamento: p.formaPagamento, valor: p.valor })),
+      })
+
+      const venda: Venda = {
+        id: r.id,
+        dataHora: new Date().toISOString().slice(0, 16),
+        clienteId: Number(clienteId) || undefined,
+        itens, pagamentos,
+        valorTotal: r.valor_total,
+        status: 'finalizada',
+      }
+      setComprovante(venda)
+      setItens([]); setPagamentos([])
+
+      // Recarrega do banco para que o catálogo e os alertas de estoque
+      // mostrem o saldo novo (RF09).
+      await sincronizar()
+      setProds([...db.produtos])
+      toast(`Venda #${r.id} registrada — estoque atualizado (UC09).`, 'ok')
+    } catch (err) {
+      // As mensagens vêm do banco: RN02 (estoque), RF25 (pagamento).
+      toast(err instanceof ApiError ? err.message : 'Não foi possível registrar a venda.', 'err')
+    } finally {
+      setFinalizando(false)
     }
-    setComprovante(venda)
-    setItens([]); setPagamentos([])
   }
 
   return (
@@ -173,8 +215,9 @@ export default function PDV() {
               <div className="flex-between">
                 <span className="muted">Falta</span><b style={{ color: faltaPagar > 0 ? 'var(--danger)' : 'var(--success)' }}>{brl(faltaPagar)}</b>
               </div>
-              <button className="btn btn-primary btn-lg btn-block mt-16" onClick={finalizar} disabled={itens.length === 0}>
-                ✓ Finalizar venda e gerar comprovante
+              <button className="btn btn-primary btn-lg btn-block mt-16" onClick={finalizar}
+                disabled={itens.length === 0 || finalizando}>
+                {finalizando ? 'Registrando no banco…' : '✓ Finalizar venda e gerar comprovante'}
               </button>
               <div className="alert info mt-12" style={{ marginBottom: 0 }}>A baixa no estoque é automática (UC09) e alertas de mínimo/validade são emitidos (UC10/UC21).</div>
             </div>

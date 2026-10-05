@@ -4,18 +4,35 @@ import { brl, brlShort, fmtTime, petLabel, servicoLabel, clienteNome, colaborado
 import { StatCard, EmptyState } from '../../ui'
 import { useNav, Topbar, Sidebar, MobileNav, GESTOR_NAV } from '../../shell'
 
+// Data de referência do painel. O protótipo inteiro é ambientado em
+// setembro/2026 (mesma constante usada no PDV), então os períodos do
+// faturamento são calculados a partir dela.
+const HOJE = '2026-09-12'
+
 export default function Dashboard() {
   const nav = useNav()
 
-  // Faturamento simulado (mock estático coerente com os dados)
-  const fatDia = 487.6
-  const fatSemana = 3210.4
-  const fatMes = 12480.9
+  // ===== Faturamento calculado a partir das vendas do banco (RF14) =====
+  // Só vendas finalizadas contam; estornadas são excluídas, assim como na
+  // view `vw_faturamento` do PostgreSQL.
+  const vendasFinalizadas = db.vendas.filter(v => v.status === 'finalizada')
+  const soma = (lista: { valorTotal: number }[]) =>
+    lista.reduce((s, v) => s + Number(v.valorTotal ?? 0), 0)
 
-  const agsHoje = db.agendamentos.filter(a => a.dataHora.startsWith('2026-09-12'))
+  const noDia = vendasFinalizadas.filter(v => v.dataHora.startsWith(HOJE))
+  const inicioSemana = '2026-09-07'
+  const inicioMes = '2026-09-01'
+  const naSemana = vendasFinalizadas.filter(v => v.dataHora >= inicioSemana && v.dataHora < HOJE.slice(0, 8) + '13')
+  const noMes = vendasFinalizadas.filter(v => v.dataHora.slice(0, 7) === HOJE.slice(0, 7))
+
+  const fatDia = soma(noDia)
+  const fatSemana = soma(naSemana)
+  const fatMes = soma(noMes)
+
+  const agsHoje = db.agendamentos.filter(a => a.dataHora.startsWith(HOJE))
   const ocupacao = Math.round((agsHoje.filter(a => a.status !== 'cancelado').length / 16) * 100)
 
-  // Serviços mais vendidos (mock)
+  // Serviços mais vendidos (RF15), contados sobre os agendamentos do banco.
   const servCounts: Record<string, number> = {}
   db.agendamentos.forEach(a => {
     const n = servicoLabel(a.servicoId)

@@ -1,0 +1,366 @@
+erDiagram
+
+%% =========================================================================
+%% PetPlus — MER (Modelo Entidade-Relacionamento)
+%% ---------------------------------------------------------------------
+%% O Mermaid exige que `erDiagram` seja a primeira linha do arquivo; os
+%% comentários abaixo vivem dentro do diagrama.
+%% Renderização: https://mermaid.live  (cole o conteúdo e exporte PNG/SVG)
+%%               ou, no VS Code, "Markdown Preview Mermaid Support".
+%% Legenda: 1 = exatamente um   0..1 = zero ou um
+%%          0..* = zero ou muitos    1..* = um ou muitos
+%% =========================================================================
+
+%% ------------------------------------------------------------------
+%% MULTI-TENANT (RNF13) — toda entidade de negócio pertence a um petshop
+%% ------------------------------------------------------------------
+    PETSHOP ||--o{ USUARIO : "possui"
+    PETSHOP ||--o{ PET : "cadastra"
+    PETSHOP ||--o{ SERVICO : "oferece"
+    PETSHOP ||--o{ PRODUTO : "controla"
+    PETSHOP ||--o{ PACOTE_SERVICO : "define"
+    PETSHOP ||--o{ FORNECEDOR : "cadastra"
+    PETSHOP ||--o{ VENDA : "registra"
+    PETSHOP ||--o{ AUDITORIA : "registra"
+
+%% ------------------------------------------------------------------
+%% HERANÇA DA CLASSE ABSTRATA USUARIO
+%% Uma linha em `usuario` + specialization por perfil (1:0..1).
+%% ------------------------------------------------------------------
+    USUARIO ||--o| CLIENTE : "especializa-se em"
+    USUARIO ||--o| COLABORADOR : "especializa-se em"
+    USUARIO ||--o| GESTOR : "especializa-se em"
+    USUARIO ||--o{ TOKEN_RECUPERACAO : "solicita"
+    USUARIO ||--o{ NOTIFICACAO : "recebe"
+
+%% ------------------------------------------------------------------
+%% TUTOR, PETS E SAÚDE
+%% ------------------------------------------------------------------
+    CLIENTE ||--o{ PET : "é tutor de"
+    CLIENTE ||--o{ REGISTRO_SAUDE : "consulta"
+    PET ||--o{ REGISTRO_SAUDE : "possui linha do tempo"
+
+%% ------------------------------------------------------------------
+%% AGENDA
+%% ------------------------------------------------------------------
+    COLABORADOR ||--o{ DISPONIBILIDADE_COLABORADOR : "tem"
+    COLABORADOR ||--o{ BLOQUEIO_AGENDA : "registra"
+    COLABORADOR ||--o{ AGENDAMENTO : "executa"
+
+    SERVICO     ||--o{ AGENDAMENTO : "é objeto de"
+    PET         ||--o{ AGENDAMENTO : "é atendido em"
+    CLIENTE     ||--o{ AGENDAMENTO : "contrata"
+
+    AGENDAMENTO ||--o| AVALIACAO : "recebe"
+    AGENDAMENTO ||--o{ NOTIFICACAO : "gera lembrete de"
+
+%% ------------------------------------------------------------------
+%% PACOTES RECORRENTES (RF29)
+%% ------------------------------------------------------------------
+    PACOTE_SERVICO ||--o{ PACOTE_SERVICO_ITEM : "inclui"
+    SERVICO        ||--o{ PACOTE_SERVICO_ITEM : "faz parte de"
+    PACOTE_SERVICO ||--o{ ASSINATURA_PACOTE : "é contratado como"
+    CLIENTE        ||--o{ ASSINATURA_PACOTE : "assina"
+    PET            ||--o{ ASSINATURA_PACOTE : "vinculada a"
+
+%% ------------------------------------------------------------------
+%% ESTOQUE
+%% ------------------------------------------------------------------
+    FORNECEDOR ||--o{ PRODUTO : "fornece"
+    PRODUTO    ||--o{ LOTE : "recebe em"
+    PRODUTO    ||--o{ MOVIMENTACAO_ESTOQUE : "movimenta"
+    LOTE       ||--o{ MOVIMENTACAO_ESTOQUE : "origina"
+
+%% ------------------------------------------------------------------
+%% PDV
+%% ------------------------------------------------------------------
+    VENDA   ||--|{ ITEM_VENDA : "contém"
+    PRODUTO ||--o{ ITEM_VENDA : "vendido em"
+    VENDA   ||--|{ PAGAMENTO : "paga-se com"
+    VENDA   ||--o{ MOVIMENTACAO_ESTOQUE : "gera baixa de"
+    AGENDAMENTO ||--o{ VENDA : "pode ser pago em"
+
+%% ------------------------------------------------------------------
+%% AUDITORIA E RELATÓRIOS
+%% ------------------------------------------------------------------
+    GESTOR ||--o{ RELATORIO : "gera"
+    USUARIO ||--o{ AUDITORIA : "executa"
+
+%% ======================================================================
+%% ATRIBUTOS
+%% ======================================================================
+
+    PETSHOP {
+        bigserial   id PK
+        varchar     nome
+        char        cnpj UK "só dígitos"
+        citext      email UK
+        varchar     timezone
+        smallint    prazo_estorno_dias "RN11"
+        smallint    antecedencia_lembrete_h "RN06/RF12"
+        smallint    antecedencia_validade_d "RN09/RF23"
+        boolean     ativo
+    }
+
+    USUARIO {
+        bigserial  id PK
+        bigint     petshop_id FK
+        enum       perfil "GESTOR|COLABORADOR|CLIENTE"
+        varchar    nome
+        citext     email UK
+        varchar    telefone
+        text       senha_hash "bcrypt — RNF02"
+        boolean    ativo "exclusão lógica RF03"
+        boolean    consent_lgpd "RNF11"
+        timestamptz ultimo_acesso
+    }
+
+    CLIENTE {
+        bigint   usuario_id PK,FK "1:1 com usuario"
+        bigint   petshop_id FK
+        char     cpf UK
+        varchar  endereco
+        integer  pontos_fidelidade "RF20"
+    }
+
+    COLABORADOR {
+        bigint  usuario_id PK,FK "1:1 com usuario"
+        bigint  petshop_id FK
+        enum    cargo "ATENDENTE|TOSADOR|BANHISTA|VETERINARIO"
+        varchar matricula
+    }
+
+    GESTOR {
+        bigint  usuario_id PK,FK "1:1 com usuario"
+        bigint  petshop_id FK
+        varchar cargo
+    }
+
+    TOKEN_RECUPERACAO {
+        bigserial   id PK
+        bigint      petshop_id FK
+        bigint      usuario_id FK
+        text        token_hash UK "SHA-256, nunca em claro"
+        timestamptz expira_em
+        timestamptz usado_em
+    }
+
+    DISPONIBILIDADE_COLABORADOR {
+        bigserial id PK
+        bigint    petshop_id FK
+        bigint    colaborador_id FK
+        smallint  dia_semana "0=dom … 6=sáb"
+        time      hora_inicio
+        time      hora_fim
+    }
+
+    PET {
+        bigserial id PK
+        bigint    petshop_id FK
+        bigint    cliente_id FK "tutor"
+        varchar   nome
+        varchar   especie
+        varchar   raca
+        varchar   porte
+        smallint  idade
+        date      data_nascimento
+        text      observacoes_saude "LGPD"
+        boolean   ativo
+    }
+
+    REGISTRO_SAUDE {
+        bigserial id PK
+        bigint    petshop_id FK
+        bigint    pet_id FK
+        enum      tipo "vacina|atendimento|banho|observação"
+        date      data
+        text      descricao
+        date      proximo_vencimento "RF13"
+    }
+
+    SERVICO {
+        bigserial  id PK
+        bigint     petshop_id FK
+        varchar    nome
+        enum       tipo "banho|tosa|consulta"
+        integer    duracao "minutos"
+        numeric    preco
+        boolean    ativo
+    }
+
+    AGENDAMENTO {
+        bigserial   id PK
+        bigint      petshop_id FK
+        bigint      pet_id FK
+        bigint      cliente_id FK "derivado do pet"
+        bigint      colaborador_id FK
+        bigint      servico_id FK
+        timestamptz data_hora "início"
+        timestamptz data_hora_fim "início + duração"
+        enum        status "confirmado|cancelado|concluído"
+        numeric     valor "preço congelado"
+        timestamptz cancelado_em
+        text        motivo_cancelamento
+    }
+
+    BLOQUEIO_AGENDA {
+        bigserial id PK
+        bigint    petshop_id FK
+        bigint    colaborador_id FK
+        date      data_inicio
+        date      data_fim
+        varchar   motivo
+    }
+
+    AVALIACAO {
+        bigserial   id PK
+        bigint      petshop_id FK
+        bigint      agendamento_id FK,UK "1:0..1"
+        bigint      cliente_id FK
+        smallint    nota "1 a 5"
+        text        comentario
+        timestamptz data
+    }
+
+    PACOTE_SERVICO {
+        bigserial id PK
+        bigint    petshop_id FK
+        varchar   nome
+        varchar   periodicidade
+        numeric   preco
+        boolean   ativo
+    }
+
+    PACOTE_SERVICO_ITEM {
+        bigint pacote_id PK,FK
+        bigint servico_id PK,FK
+        bigint petshop_id FK
+    }
+
+    ASSINATURA_PACOTE {
+        bigserial   id PK
+        bigint      petshop_id FK
+        bigint      pacote_id FK
+        bigint      cliente_id FK
+        bigint      pet_id FK
+        enum        status "ativo|cancelado"
+        timestamptz iniciada_em
+        timestamptz encerrada_em
+    }
+
+    FORNECEDOR {
+        bigserial id PK
+        bigint    petshop_id FK
+        varchar   nome
+        char      cnpj "só dígitos"
+        varchar   contato
+        citext    email
+        boolean   ativo
+    }
+
+    PRODUTO {
+        bigserial id PK
+        bigint    petshop_id FK
+        bigint    fornecedor_id FK
+        varchar   nome
+        varchar   categoria
+        varchar   sku
+        integer   quantidade_estoque "projeção da trilha"
+        integer   estoque_minimo "RN05"
+        date      validade "RN09"
+        numeric   preco
+        boolean   ativo
+    }
+
+    LOTE {
+        bigserial id PK
+        bigint    petshop_id FK
+        bigint    produto_id FK
+        bigint    fornecedor_id FK
+        integer   quantidade
+        numeric   custo_unitario
+        date      validade
+    }
+
+    MOVIMENTACAO_ESTOQUE {
+        bigserial   id PK
+        bigint      petshop_id FK
+        bigint      produto_id FK
+        enum        tipo "entrada|saida|ajuste|estorno"
+        integer     quantidade "sempre positivo"
+        bigint      venda_id FK
+        bigint      lote_id FK
+        bigint      usuario_id FK
+        timestamptz data_hora
+    }
+
+    VENDA {
+        bigserial   id PK
+        bigint      petshop_id FK
+        bigint      cliente_id FK "NULL = avulsa"
+        bigint      agendamento_id FK
+        timestamptz data_hora
+        numeric     valor_total
+        numeric     desconto
+        enum        status "finalizada|estornada"
+        bigint      usuario_id FK "operador do PDV"
+        timestamptz estornado_em
+        bigint      estornado_por FK
+        text        motivo_estorno
+    }
+
+    ITEM_VENDA {
+        bigserial id PK
+        bigint    petshop_id FK
+        bigint    venda_id FK
+        bigint    produto_id FK
+        varchar   nome "congelado no momento"
+        integer   quantidade
+        numeric   preco_unitario
+        numeric   subtotal
+    }
+
+    PAGAMENTO {
+        bigserial   id PK
+        bigint      petshop_id FK
+        bigint      venda_id FK
+        enum        forma_pagamento "dinheiro|débito|crédito|PIX"
+        numeric     valor
+        timestamptz data_hora
+    }
+
+    NOTIFICACAO {
+        bigserial   id PK
+        bigint      petshop_id FK
+        bigint      usuario_id FK
+        enum        canal "e-mail|push"
+        varchar     tipo
+        varchar     destinatario
+        text        mensagem
+        bigint      agendamento_id FK
+        timestamptz data_envio
+        boolean     lida
+    }
+
+    RELATORIO {
+        bigserial   id PK
+        bigint      petshop_id FK
+        enum        tipo "vendas|agendamentos|estoque|financeiro"
+        enum        formato "PDF|Excel|CSV"
+        varchar     periodo
+        bigint      usuario_id FK
+        varchar     caminho_arquivo
+        timestamptz data_geracao
+    }
+
+    AUDITORIA {
+        bigserial   id PK
+        bigint      petshop_id FK
+        bigint      usuario_id FK
+        varchar     acao
+        varchar     tabela
+        bigint      registro_id
+        jsonb       dados_antes
+        jsonb       dados_depois
+        timestamptz data_hora
+    }
