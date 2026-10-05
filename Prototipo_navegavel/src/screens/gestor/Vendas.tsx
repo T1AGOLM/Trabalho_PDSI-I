@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
 import { brl, fmtDateTime, clienteNome } from '../../utils'
 import { Modal, ConfirmDialog, useToast, EmptyState } from '../../ui'
 import type { Venda } from '../../types'
@@ -10,8 +11,15 @@ export default function Vendas() {
   const [detalhe, setDetalhe] = useState<Venda | null>(null)
   const [estornar, setEstornar] = useState<Venda | null>(null)
   const [filtro, setFiltro] = useState<'todas' | 'finalizada' | 'estornada'>('todas')
+  const [estornando, setEstornando] = useState(false)
 
   const lista = vendas.filter(v => filtro === 'todas' || v.status === (filtro as Venda['status']))
+
+  /** Recarrega do banco e refleta na tabela local. */
+  const recarregar = async () => {
+    await sincronizar()
+    setVendas([...db.vendas])
+  }
 
   return (
     <div>
@@ -103,10 +111,22 @@ export default function Vendas() {
           message={`A venda #${estornar.id} de ${brl(estornar.valorTotal)} será estornada. Os pagamentos serão revertidos e o estoque dos produtos envolvidos será restaurado automaticamente (RF26/RN11 — somente Gestor, dentro do prazo comercial).`}
           confirmLabel="Confirmar estorno"
           onCancel={() => setEstornar(null)}
-          onConfirm={() => {
-            setVendas(vs => vs.map(v => v.id === estornar.id ? { ...v, status: 'estornada' } : v))
-            setEstornar(null)
-            toast('Venda estornada. Estoque restaurado automaticamente (UC12).', 'ok')
+          onConfirm={async () => {
+            // Estorno real: a rota exige perfil GESTOR e o banco valida o
+            // prazo comercial do petshop (RN11). O estoque volta pela
+            // trilha de movimentações, não por ajuste na tela (RF26).
+            setEstornando(true)
+            try {
+              await api.vendas.estornar(estornar.id, 'Estorno pela tela de histórico')
+              await recarregar()
+              setDetalhe(null)
+              setEstornar(null)
+              toast('Venda estornada. Estoque restaurado automaticamente (UC12).', 'ok')
+            } catch (err) {
+              toast(err instanceof ApiError ? err.message : 'Não foi possível estornar a venda.', 'err')
+            } finally {
+              setEstornando(false)
+            }
           }} />
       )}
     </div>

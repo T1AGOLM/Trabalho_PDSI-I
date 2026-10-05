@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
 import { fmtDate, weekdayShort, dayNum, petLabel, servicoLabel, colaboradorNome, clienteNome, fmtDateTime } from '../../utils'
 import { Modal, ConfirmDialog, useToast, EmptyState, Field } from '../../ui'
 import type { Agendamento } from '../../types'
@@ -28,11 +29,45 @@ export default function Agenda() {
   const bloqueioAt = (day: string) =>
     bloqueios.find(b => day >= b.dataInicio && day <= b.dataFim)
 
-  // conflito: mesmo colaborador + mesmo dia/hora
+  // Conflito: mesmo colaborador + mesmo dia/hora.
+  //
+  // Esta verificação é só para dar retorno instantâneo na tela. A decisão
+  // final é do BANCO (constraint EXCLUDE de RN01): a chamada abaixo sempre
+  // vai ao servidor, e se o banco recusar, mostramos a mensagem dele.
   const temConflito = (colabId: number, day: string, hour: string, ignoreId?: number) =>
     agenda.some(a => a.colaboradorId === colabId && a.dataHora === `${day}T${hour}` && a.id !== ignoreId && a.status !== 'cancelado')
 
+  /** Recarrega `db` e refleta na grade local. */
+  const recarregar = async () => {
+    await sincronizar()
+    setAgenda([...db.agendamentos])
+    setBloqueios([...db.bloqueios])
+  }
+
   const openNovo = () => setNovoOpen(true)
+
+  // ---- Ações que vão ao banco -----------------------------------------
+
+  const remarcar = async (ag: Agendamento, dataHora: string) => {
+    await api.agendamentos.remarcar(ag.id, dataHora)
+    await recarregar()
+  }
+
+  const cancelar = async (ag: Agendamento) => {
+    await api.agendamentos.cancelar(ag.id, 'Cancelado pela agenda')
+    await recarregar()
+  }
+
+  const criar = async (novo: Omit<Agendamento, 'id'>) => {
+    const r = await api.agendamentos.criar({
+      petId: novo.petId,
+      servicoId: novo.servicoId,
+      colaboradorId: novo.colaboradorId,
+      dataHora: novo.dataHora,
+    })
+    await recarregar()
+    return r.id
+  }
 
   return (
     <div>
@@ -124,16 +159,21 @@ export default function Agenda() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setRemarcarOpen(false)}>Voltar</button>
-              <button className="btn btn-primary" onClick={() => {
+              <button className="btn btn-primary" onClick={async () => {
+                const dataHora = `${novaData}T${novaHora}`
                 const conflito = temConflito(selected.colaboradorId, novaData, novaHora, selected.id)
                 if (conflito) {
                   toast(`Conflito: ${colaboradorNome(selected.colaboradorId)} já possui atendimento em ${fmtDate(novaData)} às ${novaHora} (RN01). Sugerimos 10:00 ou 16:00.`, 'err')
                   return
                 }
-                setAgenda(ag => ag.map(a => a.id === selected.id ? { ...a, dataHora: `${novaData}T${novaHora}`, status: 'confirmado' } : a))
-                setSelected({ ...selected, dataHora: `${novaData}T${novaHora}`, status: 'confirmado' })
-                setRemarcarOpen(false)
-                toast('Agendamento remarcado com sucesso!', 'ok')
+                try {
+                  await remarcar(selected, dataHora)
+                  setSelected({ ...selected, dataHora, status: 'confirmado' })
+                  setRemarcarOpen(false)
+                  toast('Agendamento remarcado e salvo no banco!', 'ok')
+                } catch (err) {
+                  toast(err instanceof ApiError ? err.message : 'Não foi possível remarcar.', 'err')
+                }
               }}>Confirmar remarcação</button>
             </>
           }>
@@ -157,17 +197,30 @@ export default function Agenda() {
           message={`O atendimento de ${petLabel(cancelTarget.petId)} em ${fmtDateTime(cancelTarget.dataHora)} será cancelado e o horário do profissional será liberado (RN04).`}
           confirmLabel="Sim, cancelar"
           onCancel={() => setCancelTarget(null)}
-          onConfirm={() => {
-            setAgenda(ag => ag.map(a => a.id === cancelTarget.id ? { ...a, status: 'cancelado' } : a))
-            setSelected(null)
-            setCancelTarget(null)
-            toast('Agendamento cancelado. Horário liberado na agenda.', 'ok')
+          onConfirm={async () => {
+            try {
+              await cancelar(cancelTarget)
+              setSelected(null)
+              setCancelTarget(null)
+              toast('Agendamento cancelado. Horário liberado na agenda.', 'ok')
+            } catch (err) {
+              toast(err instanceof ApiError ? err.message : 'Não foi possível cancelar.', 'err')
+            }
           }} />
       )}
 
       {/* Novo agendamento */}
       {novoOpen && <NovoAgendamentoModal onClose={() => setNovoOpen(false)}
-        onCreate={(novo) => { setAgenda(ag => [...ag, novo]); setNovoOpen(false); toast('Agendamento criado com status “confirmado”.', 'ok') }}
+        onCreate={async (novo) => {
+          try {
+            const id = await criar(novo)
+            setNovoOpen(false)
+            toast(`Agendamento #${id} criado com status “confirmado”.`, 'ok')
+          } catch (err) {
+            toast(err instanceof ApiError ? err.message : 'Não foi possível criar o agendamento.', 'err')
+            throw err
+          }
+        }}
         temConflito={temConflito} />}
     </div>
   )
@@ -182,29 +235,43 @@ function getServicoPreco(id: number) {
 
 function NovoAgendamentoModal({ onClose, onCreate, temConflito }: {
   onClose: () => void
-  onCreate: (a: Agendamento) => void
+  onCreate: (a: Omit<Agendamento, 'id'>) => Promise<void>
   temConflito: (colabId: number, day: string, hour: string, ignoreId?: number) => boolean
 }) {
   const toast = useToast()
-  const [petId, setPetId] = useState('1')
-  const [servicoId, setServicoId] = useState('1')
-  const [colabId, setColabId] = useState('2')
+  // Os valores iniciais vêm do banco: os ids NÃO são sequenciais (os
+  // colaboradores, por exemplo, herdam o id do usuário, e varyam entre
+  // installs). Fixar "1" e "2" aqui apontaria para pets inexistentes.
+  const [petId, setPetId] = useState(String(db.pets[0]?.id ?? ''))
+  const [servicoId, setServicoId] = useState(String(db.servicos[0]?.id ?? ''))
+  const [colabId, setColabId] = useState(String(db.colaboradores.find(c => c.ativo)?.id ?? ''))
   const [data, setData] = useState('2026-09-14')
   const [hora, setHora] = useState('09:00')
   const [erro, setErro] = useState('')
+  const [salvando, setSalvando] = useState(false)
 
-  const criar = () => {
+  const confirmar = async () => {
     const pid = Number(petId), sid = Number(servicoId), cid = Number(colabId)
-    const pet = db.pets.find(p => p.id === pid)!
+    const pet = db.pets.find(p => p.id === pid)
+    if (!pet) { setErro('Selecione um pet válido.'); return }
+    if (!sid || !cid) { setErro('Selecione serviço e profissional.'); return }
+    setErro('')
+
     if (temConflito(cid, data, hora)) {
       setErro(` RN01 violada: ${colaboradorNome(cid)} já tem atendimento em ${fmtDate(data)} às ${hora}. Tente outro horário.`)
       return
     }
-    onCreate({
-      id: Math.max(...db.agendamentos.map(a => a.id)) + 1,
-      petId: pid, clienteId: pet.clienteId, colaboradorId: cid, servicoId: sid,
-      dataHora: `${data}T${hora}`, status: 'confirmado',
-    })
+
+    setSalvando(true)
+    try {
+      await onCreate({
+        petId: pid, clienteId: pet.clienteId, colaboradorId: cid, servicoId: sid,
+        dataHora: `${data}T${hora}`, status: 'confirmado',
+      })
+    } catch {
+      setSalvando(false)
+      // A mensagem exibida é a devolvida pelo banco (RN01/RN08).
+    }
   }
 
   return (
@@ -212,7 +279,9 @@ function NovoAgendamentoModal({ onClose, onCreate, temConflito }: {
       footer={
         <>
           <button className="btn btn-outline" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" onClick={criar}>✓ Confirmar agendamento</button>
+          <button className="btn btn-primary" onClick={confirmar} disabled={salvando}>
+          {salvando ? 'Salvando…' : '✓ Confirmar agendamento'}
+        </button>
         </>
       }>
       {erro && <div className="alert danger">{erro}</div>}

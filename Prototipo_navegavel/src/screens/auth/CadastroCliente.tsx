@@ -1,11 +1,13 @@
 import React, { useState } from 'react'
 import { useNav } from '../../shell'
 import { useToast, Field } from '../../ui'
+import { api, ApiError } from '../../api'
 
 export default function CadastroCliente() {
   const nav = useNav()
   const toast = useToast()
   const [etapa, setEtapa] = useState(1)
+  const [enviando, setEnviando] = useState(false)
   const [nome, setNome] = useState('')
   const [email, setEmail] = useState('')
   const [telefone, setTelefone] = useState('')
@@ -34,13 +36,34 @@ export default function CadastroCliente() {
     setEtapa(2)
   }
 
-  const concluir = () => {
+  const concluir = async () => {
     if (!petNome) {
       setErro('Informe o nome do pet (você pode cadastrar outros depois).')
       return
     }
-    toast('Cadastro realizado com sucesso! Faça login para continuar.', 'ok')
-    nav('login')
+    setErro('')
+    setEnviando(true)
+    try {
+      // Cadastro real: a senha é enviada uma única vez e o backend guarda
+      // apenas o hash bcrypt (RNF02). O consentimento LGPD é obrigatório e
+      // é gravado junto (RNF11).
+      await api.auth.cadastro({
+        nome, email, telefone, endereco, senha,
+        consentimento: consent,
+      })
+      toast('Cadastro gravado no banco! Faça login para continuar.', 'ok')
+      nav('login')
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErro(err.status === 409
+          ? 'Este e-mail já está cadastrado. Tente fazer login.'
+          : err.message)
+      } else {
+        setErro('Não foi possível concluir o cadastro. Tente novamente.')
+      }
+    } finally {
+      setEnviando(false)
+    }
   }
 
   return (
@@ -89,7 +112,7 @@ export default function CadastroCliente() {
                 </div>
                 <label className="checkbox-row mt-16" style={{ cursor: 'pointer' }}>
                   <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />
-                  <span>Li e concordo com a <a href="#" onClick={e => { e.preventDefault(); toast('Política de Privacidade (LGPD) — simulada no protótipo.', 'info') }}>Política de Privacidade</a> e autorizo o uso dos meus dados e dos dados de saúde do meu pet para prestação dos serviços. <span className="req">*</span></span>
+                  <span>Li e concordo com a <a href="#" onClick={e => { e.preventDefault(); toast('Política de Privacidade (LGPD) — o consentimento é gravado com data e hora no banco.', 'info') }}>Política de Privacidade</a> e autorizo o uso dos meus dados e dos dados de saúde do meu pet para prestação dos serviços. <span className="req">*</span></span>
                 </label>
                 <div className="form-actions">
                   <button className="btn btn-outline" onClick={() => nav('login')}>Cancelar</button>
@@ -127,7 +150,9 @@ export default function CadastroCliente() {
                 </div>
                 <div className="form-actions">
                   <button className="btn btn-outline" onClick={() => setEtapa(1)}>← Voltar</button>
-                  <button className="btn btn-primary" onClick={concluir}>Concluir cadastro ✓</button>
+                  <button className="btn btn-primary" onClick={concluir} disabled={enviando}>
+                    {enviando ? 'Gravando no banco…' : 'Concluir cadastro ✓'}
+                  </button>
                 </div>
               </>
             )}

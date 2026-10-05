@@ -9,27 +9,36 @@ const PERFIL_META: Record<string, { icon: string; nome: string; desc: string }> 
   CLIENTE: { icon: '🐶', nome: 'Cliente (tutor)', desc: 'Agendar online, histórico de saúde e fidelidade' },
 }
 
-export default function Login({ onLogin }: { onLogin: (email: string) => void }) {
+export default function Login({
+  onLogin,
+  erroExterno = '',
+}: {
+  onLogin: (email: string, senha: string) => void | Promise<void>
+  erroExterno?: string
+}) {
   const nav = useNav()
   const toast = useToast()
   const [email, setEmail] = useState('')
-  const [senha, senhaState] = [useState(''), useState('')]
-  const setSenha = senhaState[1]
+  const [senha, setSenha] = useState('')
   const [erro, setErro] = useState('')
+  const [enviando, setEnviando] = useState(false)
 
-  const submit = (e: React.FormEvent) => {
+  // Erro vindo da API (App.tsx) tem precedência sobre o erro local.
+  const mensagemErro = erroExterno || erro
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!email || !senhaState[0]) {
+    if (!email || !senha) {
       setErro('Informe e-mail e senha para entrar.')
       return
     }
-    const u = usuarios.find(x => x.email.toLowerCase() === email.toLowerCase())
-    if (!u || u.senha !== senhaState[0]) {
-      setErro('Credenciais inválidas. Verifique e tente novamente. (UC01 — 3a)')
-      return
-    }
     setErro('')
-    onLogin(u.email)
+    setEnviando(true)
+    try {
+      await onLogin(email, senha)
+    } finally {
+      setEnviando(false)
+    }
   }
 
   return (
@@ -58,7 +67,7 @@ export default function Login({ onLogin }: { onLogin: (email: string) => void })
           </div>
         ))}
         <div className="mt-20 tiny" style={{ color: '#7fa8a3' }}>
-          Protótipo navegável — nenhum dado real é armazenado ou enviado.
+          Conta protegida por JWT — a senha nunca trafega nem fica em texto puro.
         </div>
       </div>
 
@@ -67,7 +76,7 @@ export default function Login({ onLogin }: { onLogin: (email: string) => void })
           <div className="card card-pad">
             <h2>Entrar no sistema</h2>
             <div className="sub">Acesse com o seu perfil (UC01)</div>
-            {erro && <div className="alert danger">{erro}</div>}
+            {mensagemErro && <div className="alert danger">{mensagemErro}</div>}
             <form onSubmit={submit}>
               <div className="field mb-16">
                 <label>E-mail <span className="req">*</span></label>
@@ -75,7 +84,7 @@ export default function Login({ onLogin }: { onLogin: (email: string) => void })
               </div>
               <div className="field mb-16">
                 <label>Senha <span className="req">*</span></label>
-                <input type="password" placeholder="••••••" value={senhaState[0]} onChange={e => setSenha(e.target.value)} />
+                <input type="password" placeholder="••••••" value={senha} onChange={e => { setSenha(e.target.value); setErro('') }} />
               </div>
               <div className="flex-between mb-16">
                 <label className="checkbox-row" style={{ cursor: 'pointer' }}>
@@ -83,15 +92,18 @@ export default function Login({ onLogin }: { onLogin: (email: string) => void })
                 </label>
                 <a href="#/recuperar-senha" onClick={() => nav('recuperar-senha')}>Esqueci minha senha</a>
               </div>
-              <button type="submit" className="btn btn-primary btn-lg btn-block">Entrar</button>
+              <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={enviando}>
+                {enviando ? 'Entrando…' : 'Entrar'}
+              </button>
             </form>
 
             <div className="demo-accounts">
-              <div className="d-t">Acesso rápido do protótipo (senha: 123)</div>
+              <div className="d-t">Acesso rápido (senha: 123)</div>
               {usuarios.map(u => {
                 const m = PERFIL_META[u.perfil]
                 return (
-                  <button key={u.email} className="demo-btn" onClick={() => { setEmail(u.email); setSenha('123'); onLogin(u.email) }}>
+                  <button key={u.email} className="demo-btn"
+                    onClick={() => { setEmail(u.email); setSenha('123'); setErro(''); onLogin(u.email, '123') }}>
                     <span className="d-ico">{m.icon}</span>
                     <span style={{ flex: 1 }}>
                       <b>{m.nome}</b>

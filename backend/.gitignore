@@ -1,0 +1,9 @@
+# Segredos: `.env.example` é versionado, `.env` nunca.
+.env
+
+node_modules/
+npm-debug.log*
+
+# Saída de verificação
+*.txt
+!sql/*.txt
