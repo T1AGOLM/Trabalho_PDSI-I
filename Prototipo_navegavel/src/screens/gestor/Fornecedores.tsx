@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
 import { Modal, useToast, EmptyState, Field } from '../../ui'
 import type { Fornecedor } from '../../types'
 
@@ -8,6 +9,12 @@ export default function Fornecedores() {
   const [forns, setForns] = useState<Fornecedor[]>([...db.fornecedores])
   const [novoOpen, setNovoOpen] = useState(false)
   const [detalhe, setDetalhe] = useState<Fornecedor | null>(null)
+
+  /** Relê do banco: a lista em tela é sempre o que o PostgreSQL devolveu. */
+  const recarregar = async () => {
+    await sincronizar('fornecedores')
+    setForns([...db.fornecedores])
+  }
 
   const produtosDe = (fid: number) => db.produtos.filter(p => p.fornecedorId === fid)
 
@@ -71,25 +78,46 @@ export default function Fornecedores() {
         </Modal>
       )}
 
-      {novoOpen && <NovoFornModal onClose={() => setNovoOpen(false)} onCriar={(f) => {
-        setForns(fs => [...fs, f]); setNovoOpen(false)
-        toast(`Fornecedor ${f.nome} cadastrado (UC26).`, 'ok')
+      {novoOpen && <NovoFornModal onClose={() => setNovoOpen(false)} onCriar={async (dados) => {
+        try {
+          await api.fornecedores.criar(dados)
+          await recarregar()
+          setNovoOpen(false)
+          toast(`Fornecedor ${dados.nome} cadastrado (UC26).`, 'ok')
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.mensagem : 'Não foi possível cadastrar o fornecedor.'
+          toast(msg, 'err')
+          throw err
+        }
       }} />}
     </div>
   )
 }
 
-function NovoFornModal({ onClose, onCriar }: { onClose: () => void; onCriar: (f: Fornecedor) => void }) {
+function NovoFornModal({ onClose, onCriar }: {
+  onClose: () => void
+  onCriar: (dados: { nome: string; cnpj: string; contato?: string; telefone?: string }) => Promise<void>
+}) {
   const [nome, setNome] = useState(''); const [cnpj, setCnpj] = useState(''); const [contato, setContato] = useState('')
   const [erro, setErro] = useState('')
+  const [enviando, setEnviando] = useState(false)
+  // O banco guarda o CNPJ só com dígitos (a restrição é `^\d{14}$`).
+  const soDigitos = cnpj.replace(/\D/g, '')
   return (
     <Modal title="Novo fornecedor (UC26)" onClose={onClose}
       footer={
         <>
           <button className="btn btn-outline" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" onClick={() => {
-            if (!nome || cnpj.replace(/\D/g, '').length < 14) { setErro('Preencha o nome e um CNPJ válido (14 dígitos).'); return }
-            onCriar({ id: Math.max(...db.fornecedores.map(f => f.id)) + 1, nome, cnpj, contato })
+          <button className="btn btn-primary" disabled={enviando} onClick={async () => {
+            if (!nome) { setErro('Preencha a razão social.'); return }
+            if (soDigitos.length !== 14) { setErro('Informe um CNPJ com 14 dígitos.'); return }
+            setErro('')
+            setEnviando(true)
+            try {
+              await onCriar({ nome, cnpj: soDigitos, ...(contato ? { contato } : {}) })
+            } finally {
+              setEnviando(false)
+            }
           }}>✓ Cadastrar fornecedor</button>
         </>
       }>

@@ -1,38 +1,59 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
-import { fmtDate } from '../../utils'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
+import { fmtDate, todayISO } from '../../utils'
 import { Modal, ConfirmDialog, useToast, EmptyState, Field } from '../../ui'
+import { useMeuId } from '../../shell'
 import type { BloqueioAgenda } from '../../types'
-
-const ID_COLAB = 1
 
 export default function ColabBloqueios() {
   const toast = useToast()
+  const colaboradorId = useMeuId()
   const [bloqueios, setBloqueios] = useState<BloqueioAgenda[]>([...db.bloqueios])
   const [novoOpen, setNovoOpen] = useState(false)
   const [cancelar, setCancelar] = useState<BloqueioAgenda | null>(null)
 
-  const inicio = useState('2026-09-18')[0]
-  const [fim, setFim] = useState('2026-09-18')
+  const [inicio, setInicio] = useState(todayISO())
+  const [fim, setFim] = useState(todayISO())
   const [motivo, setMotivo] = useState('Folga')
   const [erro, setErro] = useState('')
+  const [enviando, setEnviando] = useState(false)
 
-  const meus = bloqueios.filter(b => b.colaboradorId === ID_COLAB)
+  const recarregar = async () => {
+    await sincronizar('bloqueios')
+    setBloqueios([...db.bloqueios])
+  }
 
-  const criar = () => {
-    // RN12: bloqueio não pode sobrepor agendamentos confirmados
+  const meus = bloqueios.filter(b => b.colaboradorId === colaboradorId)
+
+  const criar = async () => {
+    if (fim < inicio) { setErro('A data final deve ser igual ou posterior à inicial.'); return }
+    if (motivo.trim().length < 3) { setErro('Descreva o motivo (mínimo 3 caracteres).'); return }
+
+    // Conferência local para dar a mensagem antes do round-trip; a regra de
+    // verdade (RN12) é do banco, que recusa a sobreposição de qualquer forma.
     const conflitos = db.agendamentos.filter(a =>
-      a.colaboradorId === ID_COLAB &&
+      a.colaboradorId === colaboradorId &&
       a.status === 'confirmado' &&
       a.dataHora.slice(0, 10) >= inicio && a.dataHora.slice(0, 10) <= fim
     )
     if (conflitos.length > 0) {
-      setErro(`RN12 violada: você possui ${conflitos.length} agendamento(s) confirmado(s) neste período. Remarque ou cancele antes de bloquear.`)
+      setErro(`RN12: você possui ${conflitos.length} agendamento(s) confirmado(s) neste período. Remarque ou cancele antes de bloquear.`)
       return
     }
-    setBloqueios(bs => [...bs, { id: Math.max(...bloqueios.map(b => b.id)) + 1, colaboradorId: ID_COLAB, dataInicio: inicio, dataFim: fim, motivo }])
-    setNovoOpen(false)
-    toast('Bloqueio registrado. Novos agendamentos ficam impedidos no período (RF30).', 'ok')
+
+    setErro('')
+    setEnviando(true)
+    try {
+      await api.bloqueios.criar({ colaboradorId, dataInicio: inicio, dataFim: fim, motivo })
+      await recarregar()
+      setNovoOpen(false)
+      toast('Bloqueio registrado no banco. Novos agendamentos ficam impedidos no período (RF30).', 'ok')
+    } catch (err) {
+      setErro(err instanceof ApiError ? err.mensagem : 'Não foi possível registrar o bloqueio.')
+    } finally {
+      setEnviando(false)
+    }
   }
 
   return (
@@ -51,7 +72,7 @@ export default function ColabBloqueios() {
             <thead><tr><th>Período</th><th>Motivo</th><th>Status</th><th className="right">Ações</th></tr></thead>
             <tbody>
               {meus.map(b => {
-                const futuro = b.dataFim >= '2026-09-12'
+                const futuro = b.dataFim >= todayISO()
                 return (
                   <tr key={b.id}>
                     <td className="bold">{fmtDate(b.dataInicio)} → {fmtDate(b.dataFim)}</td>
@@ -77,12 +98,12 @@ export default function ColabBloqueios() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setNovoOpen(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={criar}>✓ Registrar bloqueio</button>
+              <button className="btn btn-primary" disabled={enviando} onClick={criar}>✓ Registrar bloqueio</button>
             </>
           }>
           {erro && <div className="alert danger">{erro}</div>}
           <div className="form-grid">
-            <Field label="Início" required><input type="date" value={inicio} readOnly /></Field>
+            <Field label="Início" required><input type="date" value={inicio} onChange={e => setInicio(e.target.value)} /></Field>
             <Field label="Fim" required><input type="date" value={fim} onChange={e => setFim(e.target.value)} /></Field>
             <Field label="Motivo" required full>
               <select value={motivo} onChange={e => setMotivo(e.target.value)}>
@@ -99,9 +120,14 @@ export default function ColabBloqueios() {
           message={`O bloqueio de ${fmtDate(cancelar.dataInicio)} a ${fmtDate(cancelar.dataFim)} será removido e o período voltará a aceitar agendamentos.`}
           confirmLabel="Remover"
           onCancel={() => setCancelar(null)}
-          onConfirm={() => {
-            setBloqueios(bs => bs.filter(b => b.id !== cancelar.id))
-            setCancelar(null); toast('Bloqueio removido.', 'ok')
+          onConfirm={async () => {
+            try {
+              await api.bloqueios.remover(cancelar.id)
+              await recarregar()
+              setCancelar(null); toast('Bloqueio removido.', 'ok')
+            } catch (err) {
+              toast(err instanceof ApiError ? err.mensagem : 'Não foi possível remover.', 'err')
+            }
           }} />
       )}
     </div>

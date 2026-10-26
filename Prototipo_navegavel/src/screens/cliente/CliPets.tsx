@@ -1,15 +1,22 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
 import { Modal, useToast, Field, EmptyState } from '../../ui'
+import { useMeuId } from '../../shell'
 import type { Pet } from '../../types'
-
-const MEU_ID = 1
 
 export default function CliPets() {
   const toast = useToast()
-  const [pets, setPets] = useState<Pet[]>(db.pets.filter(p => p.clienteId === MEU_ID))
+  const meuId = useMeuId()
+  // `db.pets` no perfil cliente já vem de /pets/meus: só os pets dele.
+  const [pets, setPets] = useState<Pet[]>(db.pets.filter(p => p.clienteId === meuId))
   const [novoOpen, setNovoOpen] = useState(false)
   const [edit, setEdit] = useState<Pet | null>(null)
+
+  const recarregar = async () => {
+    await sincronizar('pets')
+    setPets(db.pets.filter(p => p.clienteId === meuId))
+  }
 
   return (
     <div>
@@ -51,9 +58,17 @@ export default function CliPets() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setEdit(null)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={() => {
-                setPets(ps => ps.map(x => x.id === edit.id ? edit : x))
-                setEdit(null); toast('Dados do pet atualizados.', 'ok')
+              <button className="btn btn-primary" onClick={async () => {
+                try {
+                  await api.pets.atualizar(edit.id, {
+                    nome: edit.nome, especie: edit.especie, raca: edit.raca,
+                    porte: edit.porte, idade: edit.idade, observacoesSaude: edit.observacoesSaude,
+                  })
+                  await recarregar()
+                  setEdit(null); toast('Dados do pet atualizados.', 'ok')
+                } catch (err) {
+                  toast(err instanceof ApiError ? err.mensagem : 'Não foi possível salvar.', 'err')
+                }
               }}>Salvar</button>
             </>
           }>
@@ -76,26 +91,44 @@ export default function CliPets() {
         </Modal>
       )}
 
-      {novoOpen && <NovoPetModal onClose={() => setNovoOpen(false)} onCriar={(p) => {
-        setPets(ps => [...ps, p]); setNovoOpen(false)
-        toast(`${p.nome} cadastrado com sucesso!`, 'ok')
+      {novoOpen && <NovoPetModal onClose={() => setNovoOpen(false)} onCriar={async (dados) => {
+        try {
+          await api.pets.criar({ clienteId: meuId, ...dados })
+          await recarregar()
+          setNovoOpen(false)
+          toast(`${dados.nome} cadastrado com sucesso!`, 'ok')
+        } catch (err) {
+          toast(err instanceof ApiError ? err.mensagem : 'Não foi possível cadastrar o pet.', 'err')
+          throw err
+        }
       }} />}
     </div>
   )
 }
 
-function NovoPetModal({ onClose, onCriar }: { onClose: () => void; onCriar: (p: Pet) => void }) {
+function NovoPetModal({ onClose, onCriar }: {
+  onClose: () => void
+  onCriar: (dados: { nome: string; especie: string; raca: string; porte: string; idade: number; observacoesSaude?: string }) => Promise<void>
+}) {
   const [nome, setNome] = useState(''); const [especie, setEspecie] = useState('Cachorro'); const [raca, setRaca] = useState('')
   const [porte, setPorte] = useState('Pequeno'); const [idade, setIdade] = useState('1'); const [obs, setObs] = useState('')
-  const [erro, setErro] = useState('')
+  const [erro, setErro] = useState(''); const [enviando, setEnviando] = useState(false)
   return (
     <Modal title="Cadastrar pet" onClose={onClose}
       footer={
         <>
           <button className="btn btn-outline" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" onClick={() => {
+          <button className="btn btn-primary" disabled={enviando} onClick={async () => {
             if (!nome) { setErro('Informe o nome do pet.'); return }
-            onCriar({ id: Math.max(...db.pets.map(p => p.id)) + 1, clienteId: MEU_ID, nome, especie, raca: raca || 'SRD', porte, idade: Number(idade), observacoesSaude: obs, ativo: true })
+            setErro(''); setEnviando(true)
+            try {
+              await onCriar({
+                nome, especie, raca: raca || 'SRD', porte,
+                idade: Number(idade) || 0, ...(obs ? { observacoesSaude: obs } : {}),
+              })
+            } finally {
+              setEnviando(false)
+            }
           }}>✓ Cadastrar</button>
         </>
       }>

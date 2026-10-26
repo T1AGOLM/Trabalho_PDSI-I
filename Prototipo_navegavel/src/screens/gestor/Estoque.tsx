@@ -115,7 +115,10 @@ export default function Estoque() {
                 try {
                   // A entrada vira uma MOVIMENTAÇÃO de estoque no banco; o
                   // saldo é recalculado pelo gatilho, não somado na tela.
-                  await api.produtos.entrada(entrada.id, q, 'Entrada pela tela de Estoque')
+                  await api.produtos.entrada(entrada.id, {
+                    quantidade: q,
+                    observacao: 'Entrada pela tela de Estoque',
+                  })
                   await recarregar()
                   setEntrada(null)
                   toast(`+${q} un. adicionadas ao estoque de ${entrada.nome}.`, 'ok')
@@ -181,7 +184,7 @@ export default function Estoque() {
           onCancel={() => setExcluir(null)}
           onConfirm={async () => {
             try {
-              await api.produtos.remover(excluir.id)
+              await api.produtos.inativar(excluir.id)
               await recarregar()
               setExcluir(null); toast('Produto excluído (inativação lógica — histórico preservado).', 'ok')
             } catch (err) {

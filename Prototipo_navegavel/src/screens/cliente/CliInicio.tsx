@@ -2,24 +2,24 @@ import React from 'react'
 import { db } from '../../data'
 import { fmtDateTime, petLabel, servicoLabel, brl } from '../../utils'
 import { EmptyState } from '../../ui'
-import { useNav } from '../../shell'
-
-const MEU_ID = 1 // Ana (cliente logada no protótipo)
+import { useNav, useMeuId } from '../../shell'
 
 export default function CliInicio() {
   const nav = useNav()
-  const meusPets = db.pets.filter(p => p.clienteId === MEU_ID)
+  const meuId = useMeuId()
+  const meusPets = db.pets.filter(p => p.clienteId === meuId)
   const proximos = db.agendamentos
-    .filter(a => a.clienteId === MEU_ID && a.status === 'confirmado')
+    .filter(a => a.clienteId === meuId && a.status === 'confirmado')
     .sort((a, b) => a.dataHora.localeCompare(b.dataHora))
-  const avaliacoesPendentes = db.agendamentos.filter(a => a.clienteId === MEU_ID && a.status === 'concluído' && !db.avaliacoes.some(av => av.agendamentoId === a.id))
-  const cliente = db.clientes.find(c => c.id === MEU_ID)!
+  const avaliacoesPendentes = db.agendamentos.filter(a => a.clienteId === meuId && a.status === 'concluído' && !db.avaliacoes.some(av => av.agendamentoId === a.id))
+  // Ficha do tutor logado (GET /clientes/:id) — nome e pontos vêm do banco.
+  const cliente = db.clienteAtual
 
   return (
     <div>
       <div className="page-head">
         <div>
-          <h1>Olá, {cliente.nome.split(' ')[0]}! 👋</h1>
+          <h1>Olá, {(cliente?.nome ?? 'tutor').split(' ')[0]}! 👋</h1>
           <div className="sub">Bem-vinda ao seu espaço PetPlus — cuide do seu pet sem sair de casa.</div>
         </div>
         <button className="btn btn-primary" onClick={() => nav('cli-agendar')}>➕ Agendar serviço</button>
@@ -28,7 +28,7 @@ export default function CliInicio() {
       <div className="stats-grid">
         <div className="stat-card"><div className="stat-icon bg-teal">🐶</div><div><div className="stat-value">{meusPets.length}</div><div className="stat-label">Pets cadastrados</div></div></div>
         <div className="stat-card"><div className="stat-icon bg-blue">📅</div><div><div className="stat-value">{proximos.length}</div><div className="stat-label">Agendamentos futuros</div></div></div>
-        <div className="stat-card"><div className="stat-icon bg-orange">⭐</div><div><div className="stat-value">{cliente.pontosFidelidade}</div><div className="stat-label">Pontos de fidelidade</div></div></div>
+        <div className="stat-card"><div className="stat-icon bg-orange">⭐</div><div><div className="stat-value">{db.fidelidade?.saldo ?? cliente?.pontosFidelidade ?? 0}</div><div className="stat-label">Pontos de fidelidade</div></div></div>
         <div className="stat-card"><div className="stat-icon bg-green">🩺</div><div><div className="stat-value">{avaliacoesPendentes.length}</div><div className="stat-label">Serviços para avaliar</div></div></div>
       </div>
 
