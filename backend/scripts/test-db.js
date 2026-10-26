@@ -122,12 +122,28 @@ await teste(' toda FK de tenant é composta com petshop_id (anti-vazamento entre
        AND a.attname <> 'petshop_id'
      GROUP BY 1,2
   `)
-  const semProtecao = rows.filter(
-    (r) => !['venda_id', 'produto_id', 'pacote_id', 'agendamento_id', 'cliente_id', 'pet_id',
-             'usuario_id', 'colaborador_id', 'servico_id', 'fornecedor_id', 'lote_id',
-             'servico_id', 'criado_por', 'estornado_por'].includes(r.coluna),
-  )
+  // Colunas conhecidas por NÃO atravessar tenant: ou apontam para uma
+  // identidade global (`usuario`: quem criou/estornou) ou têm, além da FK
+  // simples, uma FK COMPOSTA com petshop_id na mesma tabela — é o caso de
+  // `registro_saude_id` (notificacao_registro_mesmo_petshop) e de todas as
+  // demais abaixo.
+  const protegidas = [
+    'venda_id', 'produto_id', 'pacote_id', 'agendamento_id', 'cliente_id', 'pet_id',
+    'usuario_id', 'colaborador_id', 'servico_id', 'fornecedor_id', 'lote_id',
+    'registro_saude_id', 'criado_por', 'estornado_por',
+  ]
+  const semProtecao = rows.filter((r) => !protegidas.includes(r.coluna))
   ok(semProtecao.length === 0, `FKs sem proteção de tenant: ${JSON.stringify(semProtecao)}`)
+})
+
+await teste('Notificação de registro de saúde não cruza tenants (FK composta nova)', async () => {
+  // Prova a proteção declarada acima: um aviso do tenant 1 não pode
+  // referenciar um registro de saúde de outro petshop.
+  await deveRejeitar(admin,
+    () => admin.query(`
+      INSERT INTO notificacao (petshop_id, usuario_id, canal, tipo, destinatario, mensagem, registro_saude_id)
+      VALUES (1, 1, 'e-mail', 'vacina', 'a@b.c', 'teste', 999999)`),
+    'notificação apontando para registro de saúde inexistente')
 })
 
 await teste('Pet de outro tutor não pode ser usado em agendamento sem FK composta', async () => {

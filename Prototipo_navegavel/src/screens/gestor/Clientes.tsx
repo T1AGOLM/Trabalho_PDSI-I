@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
 import { fmtDate, getPet, petLabel } from '../../utils'
 import { Modal, ConfirmDialog, useToast, EmptyState, Field } from '../../ui'
 import type { Cliente, Pet } from '../../types'
@@ -17,6 +18,13 @@ export default function Clientes() {
   const [editPet, setEditPet] = useState<Pet | null>(null)
   const [inativar, setInativar] = useState<{ tipo: 'cli' | 'pet'; item: Cliente | Pet } | null>(null)
   const [detalhe, setDetalhe] = useState<Cliente | null>(null)
+
+  /** Relê tutores e pets do banco depois de qualquer escrita. */
+  const recarregar = async () => {
+    await sincronizar('clientes', 'pets')
+    setClientes([...db.clientes])
+    setPets([...db.pets])
+  }
 
   const filtra = (texto: string) => texto.toLowerCase().includes(busca.toLowerCase())
 
@@ -114,11 +122,17 @@ export default function Clientes() {
       )}
 
       {/* Novo cliente + pet */}
-      {novoOpen && <NovoClienteModal onClose={() => setNovoOpen(false)} onCriar={(c, p) => {
-        setClientes(cs => [...cs, c])
-        setPets(ps => [...ps, p])
-        setNovoOpen(false)
-        toast(`Cliente ${c.nome} e pet ${p.nome} cadastrados com sucesso!`, 'ok')
+      {novoOpen && <NovoClienteModal onClose={() => setNovoOpen(false)} onCriar={async (dados) => {
+        try {
+          // Tutor e primeiro pet numa única transação do banco (RF01/RF02).
+          await api.clientes.criar({ ...dados.cliente, pet: dados.pet })
+          await recarregar()
+          setNovoOpen(false)
+          toast(`Cliente ${dados.cliente.nome} e pet ${dados.pet.nome} cadastrados no banco!`, 'ok')
+        } catch (err) {
+          toast(err instanceof ApiError ? err.mensagem : 'Não foi possível cadastrar.', 'err')
+          throw err
+        }
       }} />}
 
       {/* Editar cliente */}
@@ -127,10 +141,18 @@ export default function Clientes() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setEditCli(null)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={() => {
-                setClientes(cs => cs.map(c => c.id === editCli.id ? editCli : c))
-                setEditCli(null)
-                toast('Dados do cliente atualizados.', 'ok')
+              <button className="btn btn-primary" onClick={async () => {
+                try {
+                  await api.clientes.atualizar(editCli.id, {
+                    nome: editCli.nome, email: editCli.email,
+                    telefone: editCli.telefone, endereco: editCli.endereco,
+                  })
+                  await recarregar()
+                  setEditCli(null)
+                  toast('Dados do cliente atualizados.', 'ok')
+                } catch (err) {
+                  toast(err instanceof ApiError ? err.mensagem : 'Não foi possível salvar.', 'err')
+                }
               }}>Salvar</button>
             </>
           }>
@@ -150,10 +172,19 @@ export default function Clientes() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setEditPet(null)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={() => {
-                setPets(ps => ps.map(p => p.id === editPet.id ? editPet : p))
-                setEditPet(null)
-                toast('Dados do pet atualizados.', 'ok')
+              <button className="btn btn-primary" onClick={async () => {
+                try {
+                  await api.pets.atualizar(editPet.id, {
+                    nome: editPet.nome, especie: editPet.especie, raca: editPet.raca,
+                    porte: editPet.porte, idade: editPet.idade,
+                    observacoesSaude: editPet.observacoesSaude,
+                  })
+                  await recarregar()
+                  setEditPet(null)
+                  toast('Dados do pet atualizados.', 'ok')
+                } catch (err) {
+                  toast(err instanceof ApiError ? err.mensagem : 'Não foi possível salvar.', 'err')
+                }
               }}>Salvar</button>
             </>
           }>
@@ -213,11 +244,16 @@ export default function Clientes() {
           message={`Esta é uma exclusão lógica (RF03): o registro de ${inativar.item.nome} será marcado como inativo, e não removido. Somente o Gestor pode excluir cadastros (RN03).`}
           confirmLabel="Inativar"
           onCancel={() => setInativar(null)}
-          onConfirm={() => {
-            if (inativar.tipo === 'cli') setClientes(cs => cs.map(c => c.id === inativar.item.id ? { ...c, ativo: false } : c))
-            else setPets(ps => ps.map(p => p.id === inativar.item.id ? { ...p, ativo: false } : p))
-            setInativar(null)
-            toast('Cadastro inativado com sucesso.', 'ok')
+          onConfirm={async () => {
+            try {
+              if (inativar.tipo === 'cli') await api.clientes.inativar(inativar.item.id)
+              else await api.pets.inativar(inativar.item.id)
+              await recarregar()
+              setInativar(null)
+              toast('Cadastro inativado (exclusão lógica).', 'ok')
+            } catch (err) {
+              toast(err instanceof ApiError ? err.mensagem : 'Não foi possível inativar.', 'err')
+            }
           }} />
       )}
     </div>
@@ -226,8 +262,12 @@ export default function Clientes() {
 
 function NovoClienteModal({ onClose, onCriar }: {
   onClose: () => void
-  onCriar: (c: Cliente, p: Pet) => void
+  onCriar: (dados: {
+    cliente: { nome: string; email: string; telefone: string; endereco?: string }
+    pet: { nome: string; especie: string; raca: string; porte: string; idade: number; observacoesSaude?: string }
+  }) => Promise<void>
 }) {
+  const [enviando, setEnviando] = useState(false)
   const [etapa, setEtapa] = useState(1)
   const [nome, setNome] = useState(''); const [email, setEmail] = useState(''); const [telefone, setTelefone] = useState(''); const [endereco, setEndereco] = useState('')
   const [petNome, setPetNome] = useState(''); const [especie, setEspecie] = useState('Cachorro'); const [raca, setRaca] = useState(''); const [porte, setPorte] = useState('Pequeno'); const [idade, setIdade] = useState('1'); const [obs, setObs] = useState('')
@@ -246,12 +286,21 @@ function NovoClienteModal({ onClose, onCriar }: {
           </>
           : <>
             <button className="btn btn-outline" onClick={() => setEtapa(1)}>← Voltar</button>
-            <button className="btn btn-primary" onClick={() => {
+            <button className="btn btn-primary" disabled={enviando} onClick={async () => {
               if (!petNome) { setErro('Informe o nome do pet.'); return }
-              onCriar(
-                { id: Math.max(...db.clientes.map(c => c.id)) + 1, nome, email, telefone, endereco, pontosFidelidade: 0, ativo: true },
-                { id: Math.max(...db.pets.map(p => p.id)) + 1, clienteId: Math.max(...db.clientes.map(c => c.id)) + 1, nome: petNome, especie, raca: raca || 'SRD', porte, idade: Number(idade), observacoesSaude: obs, ativo: true },
-              )
+              setErro('')
+              setEnviando(true)
+              try {
+                await onCriar({
+                  cliente: { nome, email, telefone, ...(endereco ? { endereco } : {}) },
+                  pet: {
+                    nome: petNome, especie, raca: raca || 'SRD', porte,
+                    idade: Number(idade) || 0, ...(obs ? { observacoesSaude: obs } : {}),
+                  },
+                })
+              } finally {
+                setEnviando(false)
+              }
             }}>✓ Cadastrar cliente e pet</button>
           </>
       }>

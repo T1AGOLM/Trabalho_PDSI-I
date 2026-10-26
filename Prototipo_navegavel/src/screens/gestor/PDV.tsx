@@ -103,7 +103,7 @@ export default function PDV() {
         dataHora: new Date().toISOString().slice(0, 16),
         clienteId: Number(clienteId) || undefined,
         itens, pagamentos,
-        valorTotal: r.valor_total,
+        valorTotal: r.valorTotal,
         status: 'finalizada',
       }
       setComprovante(venda)

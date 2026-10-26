@@ -48,7 +48,16 @@ export interface Colaborador {
   telefone: string
   email: string
   disponibilidade: string // ex.: "Seg–Sex, 08h–18h"
+  /** Grade semanal estruturada — é ela que o banco consulta para aceitar agendamentos (RN08). */
+  disponibilidades?: JanelaDisponibilidade[]
   ativo: boolean
+}
+
+/** Uma faixa de atendimento em um dia da semana (0 = domingo). */
+export interface JanelaDisponibilidade {
+  diaSemana: number
+  horaInicio: string // HH:MM
+  horaFim: string // HH:MM
 }
 
 export interface RegistroSaude {
@@ -127,12 +136,16 @@ export interface Venda {
 
 export interface PacoteServico {
   id: number
+  /** Plano do catálogo a que esta assinatura se refere (RF29). */
+  pacoteId?: number
   nome: string
   periodicidade: string
   preco: number
   servicos: string[]
   clienteId: number
+  clienteNome?: string
   petId: number
+  petNome?: string
   status: 'ativo' | 'cancelado'
 }
 

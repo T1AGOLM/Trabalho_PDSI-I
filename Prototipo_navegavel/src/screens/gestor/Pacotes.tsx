@@ -1,14 +1,33 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
 import { brl, clienteNome, petLabel } from '../../utils'
 import { Modal, useToast, Field, EmptyState } from '../../ui'
 import type { PacoteServico } from '../../types'
 
 export default function Pacotes() {
   const toast = useToast()
+  // `db.pacotes` são as ASSINATURAS (o plano contratado por um tutor):
+  // "cancelar pacote" cancela a assinatura, não o plano do catálogo.
   const [pacotes, setPacotes] = useState<PacoteServico[]>([...db.pacotes])
   const [novoOpen, setNovoOpen] = useState(false)
   const [cancelar, setCancelar] = useState<PacoteServico | null>(null)
+
+  const recarregar = async () => {
+    await sincronizar('pacotes')
+    setPacotes([...db.pacotes])
+  }
+
+  /** Uma assinatura cancelada não "volta": contrata-se de novo (RF29). */
+  const recontratar = async (p: PacoteServico) => {
+    try {
+      await api.assinaturas.criar({ pacoteId: p.pacoteId ?? p.id, clienteId: p.clienteId, petId: p.petId })
+      await recarregar()
+      toast(`Pacote de ${clienteNome(p.clienteId)} contratado novamente.`, 'ok')
+    } catch (err) {
+      toast(err instanceof ApiError ? err.mensagem : 'Não foi possível contratar novamente.', 'err')
+    }
+  }
 
   return (
     <div>
@@ -40,16 +59,26 @@ export default function Pacotes() {
               <div className="flex mt-12" style={{ justifyContent: 'flex-end' }}>
                 {p.status === 'ativo'
                   ? <button className="btn btn-outline btn-sm" onClick={() => setCancelar(p)}>Cancelar pacote</button>
-                  : <button className="btn btn-primary btn-sm" onClick={() => { setPacotes(ps => ps.map(x => x.id === p.id ? { ...x, status: 'ativo' } : x)); toast('Pacote reativado.', 'ok') }}>Reativar</button>}
+                  : <button className="btn btn-primary btn-sm" onClick={() => recontratar(p)}>Contratar novamente</button>}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {novoOpen && <NovoPacoteModal onClose={() => setNovoOpen(false)} onCriar={(p) => {
-        setPacotes(ps => [...ps, p]); setNovoOpen(false)
-        toast(`Pacote contratado para ${clienteNome(p.clienteId)} (UC24).`, 'ok')
+      {novoOpen && <NovoPacoteModal onClose={() => setNovoOpen(false)} onCriar={async (dados) => {
+        try {
+          // Duas escritas no domínio: o plano (catálogo) e a adesão do tutor
+          // a ele. As duas vão para o banco na sequência, com o id real.
+          const plano = await api.pacotes.criar(dados.plano)
+          await api.assinaturas.criar({ pacoteId: plano.id, clienteId: dados.clienteId, petId: dados.petId })
+          await recarregar()
+          setNovoOpen(false)
+          toast(`Pacote ${dados.plano.nome} contratado para ${clienteNome(dados.clienteId)} (UC24).`, 'ok')
+        } catch (err) {
+          toast(err instanceof ApiError ? err.mensagem : 'Não foi possível contratar o pacote.', 'err')
+          throw err
+        }
       }} />}
 
       {cancelar && (
@@ -57,9 +86,14 @@ export default function Pacotes() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setCancelar(null)}>Voltar</button>
-              <button className="btn btn-danger" onClick={() => {
-                setPacotes(ps => ps.map(x => x.id === cancelar.id ? { ...x, status: 'cancelado' } : x))
-                setCancelar(null); toast('Pacote cancelado.', 'ok')
+              <button className="btn btn-danger" onClick={async () => {
+                try {
+                  await api.assinaturas.cancelar(cancelar.id)
+                  await recarregar()
+                  setCancelar(null); toast('Assinatura cancelada.', 'ok')
+                } catch (err) {
+                  toast(err instanceof ApiError ? err.mensagem : 'Não foi possível cancelar.', 'err')
+                }
               }}>Cancelar pacote</button>
             </>
           }>
@@ -70,12 +104,20 @@ export default function Pacotes() {
   )
 }
 
-function NovoPacoteModal({ onClose, onCriar }: { onClose: () => void; onCriar: (p: PacoteServico) => void }) {
+function NovoPacoteModal({ onClose, onCriar }: {
+  onClose: () => void
+  onCriar: (dados: {
+    plano: { nome: string; periodicidade: string; preco: number; servicoIds: number[] }
+    clienteId: number
+    petId: number
+  }) => Promise<void>
+}) {
   const [nome, setNome] = useState('Plano Banho & Tosa Mensal')
   const [clienteId, setClienteId] = useState('2')
   const [petId, setPetId] = useState('3')
   const [sel, setSel] = useState<number[]>([2])
   const [periodicidade, setPeriodicidade] = useState('Mensal')
+  const [enviando, setEnviando] = useState(false)
 
   const servicosSel = db.servicos.filter(s => sel.includes(s.id))
   const preco = servicosSel.reduce((s, x) => s + x.preco, 0) * 0.85 // desconto de pacote
@@ -87,13 +129,17 @@ function NovoPacoteModal({ onClose, onCriar }: { onClose: () => void; onCriar: (
       footer={
         <>
           <button className="btn btn-outline" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" disabled={sel.length === 0} onClick={() => {
-            onCriar({
-              id: Math.max(...db.pacotes.map(p => p.id)) + 1,
-              nome, periodicidade, preco,
-              servicos: servicosSel.map(s => s.nome),
-              clienteId: Number(clienteId), petId: Number(petId), status: 'ativo',
-            })
+          <button className="btn btn-primary" disabled={sel.length === 0 || enviando} onClick={async () => {
+            setEnviando(true)
+            try {
+              await onCriar({
+                plano: { nome, periodicidade, preco, servicoIds: sel },
+                clienteId: Number(clienteId),
+                petId: Number(petId),
+              })
+            } finally {
+              setEnviando(false)
+            }
           }}>✓ Contratar pacote</button>
         </>
       }>

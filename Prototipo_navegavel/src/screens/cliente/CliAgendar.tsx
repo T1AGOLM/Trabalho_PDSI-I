@@ -1,38 +1,73 @@
-import React, { useState } from 'react'
-import { db } from '../../data'
-import { brl, fmtDate, weekdayShort } from '../../utils'
+import React, { useEffect, useState } from 'react'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
+import { brl, fmtDate, nextDays, weekdayShort } from '../../utils'
 import { useToast, Field } from '../../ui'
-import { useNav } from '../../shell'
+import { useNav, useMeuId } from '../../shell'
 
-const MEU_ID = 1
-const HORAS = ['08:00', '09:00', '10:00', '11:00', '13:00', '14:00', '15:00', '16:00', '17:00']
-const DIAS = ['2026-09-14', '2026-09-15', '2026-09-16', '2026-09-17', '2026-09-18']
+/** Janela de busca de horários livres: os próximos 14 dias. */
+const DIAS = nextDays(14)
 
 export default function CliAgendar() {
   const nav = useNav()
   const toast = useToast()
+  const meuId = useMeuId()
   const [etapa, setEtapa] = useState(1)
-  const [petId, setPetId] = useState('1')
-  const [servicoId, setServicoId] = useState('1')
-  const [colabId, setColabId] = useState('2')
+  const [enviando, setEnviando] = useState(false)
+  const meusPets = db.pets.filter(p => p.clienteId === meuId && p.ativo)
+  const [petId, setPetId] = useState(String(meusPets[0]?.id ?? ''))
+  const [servicoId, setServicoId] = useState(String(db.servicos[0]?.id ?? ''))
+  const [colabId, setColabId] = useState(String(db.colaboradores[0]?.id ?? ''))
   const [data, setData] = useState(DIAS[0])
   const [hora, setHora] = useState('')
+  // Horários vêm do banco: GET /agenda/horarios-livres já desconta a grade
+  // do profissional, os agendamentos existentes e os bloqueios (RN01/RN08/RN12).
+  const [livres, setLivres] = useState<string[]>([])
+  const [carregandoHorarios, setCarregandoHorarios] = useState(false)
 
-  const meusPets = db.pets.filter(p => p.clienteId === MEU_ID && p.ativo)
-  const servico = db.servicos.find(s => s.id === Number(servicoId))!
-  const colab = db.colaboradores.find(c => c.id === Number(colabId))!
+  const servico = db.servicos.find(s => s.id === Number(servicoId))
+  const colab = db.colaboradores.find(c => c.id === Number(colabId))
+  const petEscolhido = db.pets.find(p => p.id === Number(petId))
 
-  // horários já ocupados para o profissional escolhido
-  const ocupados = db.agendamentos
-    .filter(a => a.colaboradorId === Number(colabId) && a.status !== 'cancelado' && a.dataHora.startsWith(data))
-    .map(a => a.dataHora.split('T')[1].slice(0, 5))
+  // Bloqueio do dia inteiro: o backend também recusa, mas avisar antes evita
+  // o tutor escolher um horário que não existe.
+  const bloqueado = db.bloqueios.some(
+    b => b.colaboradorId === Number(colabId) && data >= b.dataInicio && data <= b.dataFim,
+  )
 
-  const bloqueado = db.bloqueios.some(b => b.colaboradorId === Number(colabId) && data >= b.dataInicio && data <= b.dataFim)
+  useEffect(() => {
+    if (etapa !== 3 || !colabId || !data || bloqueado) { setLivres([]); return }
+    let cancelado = false
+    setCarregandoHorarios(true)
+    api.agendamentos
+      .horariosLivres({ colaboradorId: Number(colabId), data, duracao: servico?.duracao ?? 60 })
+      .then(r => { if (!cancelado) setLivres(r.horarios ?? []) })
+      .catch(() => { if (!cancelado) setLivres([]) })
+      .finally(() => { if (!cancelado) setCarregandoHorarios(false) })
+    return () => { cancelado = true }
+  }, [etapa, colabId, data, bloqueado, servico?.duracao])
 
-  const confirma = () => {
-    if (!hora) { toast('Selecione um horário disponível.', 'err'); return }
-    toast(`Agendamento confirmado para ${db.pets.find(p => p.id === Number(petId))?.nome} — ${fmtDate(data)} às ${hora}! Lembrete será enviado 24h antes.`, 'ok')
-    nav('cli-agendamentos')
+  const confirma = async () => {
+    if (!hora || !servico || !colab) { toast('Selecione um horário disponível.', 'err'); return }
+    setEnviando(true)
+    try {
+     // Escrita real: o banco valida conflito (RN01) e disponibilidade (RN08)
+      // e recusa com a mensagem de negócio se algo mudou nesse meio-tempo.
+      const criado = await api.agendamentos.criar({
+        petId: Number(petId),
+        servicoId: Number(servicoId),
+        colaboradorId: Number(colabId),
+        dataHora: `${data}T${hora}`,
+        valor: servico.preco,
+      })
+      await sincronizar('agendamentos')
+      toast(`Agendamento #${criado.id} confirmado para ${petEscolhido?.nome} — ${fmtDate(data)} às ${hora}! Lembrete será enviado 24h antes.`, 'ok')
+      nav('cli-agendamentos')
+    } catch (err) {
+      toast(err instanceof ApiError ? err.mensagem : 'Não foi possível confirmar o agendamento.', 'err')
+    } finally {
+      setEnviando(false)
+    }
   }
 
   return (
@@ -62,12 +97,12 @@ export default function CliAgendar() {
                 </select>
               </Field>
               <Field label="Serviço desejado" required>
-                <select value={servicoId} onChange={e => setServicoId(e.target.value)}>
+                <select value={servicoId} onChange={e => { setServicoId(e.target.value); setHora('') }}>
                   {db.servicos.map(s => <option key={s.id} value={s.id}>{s.nome} — {brl(s.preco)} ({s.duracao} min)</option>)}
                 </select>
               </Field>
             </div>
-            <div className="alert info mt-16">🐾 <span><b>{db.pets.find(p => p.id === Number(petId))?.nome}</b>: {db.pets.find(p => p.id === Number(petId))?.observacoesSaude}</span></div>
+            <div className="alert info mt-16">🐾 <span><b>{petEscolhido?.nome}</b>: {petEscolhido?.observacoesSaude || 'sem observações de saúde'}</span></div>
             <div className="form-actions">
               <button className="btn btn-outline" onClick={() => nav('cli-inicio')}>Cancelar</button>
               <button className="btn btn-primary" onClick={() => setEtapa(2)}>Continuar →</button>
@@ -79,7 +114,7 @@ export default function CliAgendar() {
           <>
             <Field label="Profissional" required>
               <select value={colabId} onChange={e => setColabId(e.target.value)}>
-                {db.colaboradores.filter(c => c.ativo && c.cargo !== 'ATENDENTE').map(c => (
+                {db.colaboradores.filter(c => c.ativo).map(c => (
                   <option key={c.id} value={c.id}>{c.nome} — {c.cargo === 'VETERINARIO' ? 'Veterinário(a)' : c.cargo === 'TOSADOR' ? 'Tosador' : 'Banhista'} · {c.disponibilidade}</option>
                 ))}
               </select>
@@ -106,32 +141,36 @@ export default function CliAgendar() {
             {bloqueado ? (
               <div className="alert danger">🚫 Dia bloqueado para este profissional.</div>
             ) : (
-              <div className="flex" style={{ gap: 9, flexWrap: 'wrap' }}>
-                {HORAS.map(h => {
-                  const ocupado = ocupados.includes(h)
-                  return (
-                    <button key={h} disabled={ocupado}
+              carregandoHorarios ? (
+                <div className="small muted">Consultando a agenda do profissional…</div>
+              ) : livres.length === 0 ? (
+                <div className="alert warn">Nenhum horário livre para este profissional neste dia. Tente outra data (RN08).</div>
+              ) : (
+                <div className="flex" style={{ gap: 9, flexWrap: 'wrap' }}>
+                  {livres.map(h => (
+                    <button key={h}
                       className={`btn ${hora === h ? 'btn-primary' : 'btn-outline'}`}
-                      style={ocupado ? { textDecoration: 'line-through', opacity: .45 } : {}}
                       onClick={() => setHora(h)}>
-                      {h}{ocupado ? ' · ocupado' : ''}
+                      {h}
                     </button>
-                  )
-                })}
-              </div>
+                  ))}
+                </div>
+              )
             )}
-            <div className="alert info mt-16">🤖 Horários ocupados aparecem riscados — o sistema valida o conflito em tempo real (UC06/RN01).</div>
+            <div className="alert info mt-16">🤖 A lista já vem do banco sem os horários ocupados, bloqueados ou fora da grade (UC06 · RN01/RN08/RN12).</div>
 
             <div className="divider" />
             <h3 className="mb-12" style={{ fontSize: 14 }}>Resumo da reserva</h3>
-            <div className="kv"><span className="k">Pet</span><span className="v">{db.pets.find(p => p.id === Number(petId))?.nome}</span></div>
-            <div className="kv"><span className="k">Serviço</span><span className="v">{servico.nome}</span></div>
-            <div className="kv"><span className="k">Profissional</span><span className="v">{colab.nome}</span></div>
+            <div className="kv"><span className="k">Pet</span><span className="v">{petEscolhido?.nome}</span></div>
+            <div className="kv"><span className="k">Serviço</span><span className="v">{servico?.nome}</span></div>
+            <div className="kv"><span className="k">Profissional</span><span className="v">{colab?.nome}</span></div>
             <div className="kv"><span className="k">Data e horário</span><span className="v">{fmtDate(data)} {hora ? 'às ' + hora : '(escolha acima)'}</span></div>
-            <div className="kv"><span className="k">Valor estimado</span><span className="v">{brl(servico.preco)}</span></div>
+            <div className="kv"><span className="k">Valor estimado</span><span className="v">{brl(servico?.preco ?? 0)}</span></div>
             <div className="form-actions">
               <button className="btn btn-outline" onClick={() => setEtapa(2)}>← Voltar</button>
-              <button className="btn btn-primary btn-lg" disabled={!hora} onClick={confirma}>✓ Confirmar agendamento</button>
+              <button className="btn btn-primary btn-lg" disabled={!hora || enviando} onClick={confirma}>
+                {enviando ? 'Confirmando…' : '✓ Confirmar agendamento'}
+              </button>
             </div>
           </>
         )}

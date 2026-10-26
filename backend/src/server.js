@@ -1,52 +1,102 @@
 import express from 'express'
-import cors from 'cors'
+import compression from 'compression'
+import cookieParser from 'cookie-parser'
 import { config } from './config/env.js'
+import { logger } from './observability/logger.js'
+import { medirRequisicoes } from './observability/metrics.js'
 import { routes } from './routes/index.js'
 import { naoEncontrado, tratadorDeErros } from './middleware/errors.js'
+import {
+  cabecalhosSeguranca, corsRestrito, higienizarEntrada, idDaRequisicao, limiteGlobal, tempoLimite,
+} from './middleware/security.js'
 import { pool, closePool } from './db/pool.js'
+import { iniciarAgendador, pararAgendador } from './jobs/agendador.js'
 
 /**
  * Ponto de entrada da API.
  *
- * A API é propositalmente fina: parse, autenticação, roteamento e
- * tratamento de erro. Regras de negócio moram nos serviços e SQL mora no
- * banco. É essa separação que permite substituir qualquer camada sem
- * quebrar as outras quando o backend robusto for construído.
+ * A ordem dos middlewares é a ordem de defesa:
+ *
+ *   1. identificação e métrica (todo o resto é rastreável);
+ *   2. cabeçalhos de segurança e CORS restrito;
+ *   3. compressão e parse do corpo (com limite);
+ *   4. limpeza da entrada;
+ *   5. timeout e limite de taxa;
+ *   6. rotas → 404 → tratador de erros.
+ *
+ * Nada aqui contém regra de negócio: é a mesma separação em camadas do
+ * projeto (routes → services → repositories → banco), agora com a
+ * segurança HTTP explícita em um lugar só.
  */
 const app = express()
 
-app.use(cors({ origin: config.cors.origin, credentials: true }))
-app.use(express.json({ limit: '1mb' }))
+// Atrás de proxy/balanceador, `req.ip` e `req.protocol` precisam confiar
+// nos cabeçalhos X-Forwarded-* — com valor padrão 0 (confiança em ninguém).
+app.set('trust proxy', config.http.trustProxy)
+// `simple` impede `?a[b]=c` criar objeto aninhado na query (vetor clássico
+// de poluição de protótipo e de confusão de parâmetros HTTP).
+app.set('query parser', 'simple')
+app.disable('x-powered-by')
 
-// Health check — usado por deploy e por quem está esperando o banco subir.
-app.get('/api/health', async (_req, res) => {
-  try {
-    await pool.query('SELECT 1')
-    res.json({ ok: true, banco: 'conectado', ambiente: config.env })
-  } catch (err) {
-    res.status(503).json({ ok: false, banco: 'indisponível', erro: err.message })
-  }
-})
+app.use(idDaRequisicao)
+app.use(medirRequisicoes)
+app.use(cabecalhosSeguranca)
+app.use(corsRestrito)
+app.use(compression({ threshold: 1024 }))
+app.use(express.json({ limit: config.http.bodyLimit }))
+app.use(cookieParser())
+app.use(higienizarEntrada)
+app.use(tempoLimite())
+app.use(limiteGlobal)
 
 app.use('/api', routes)
 
-// 404 de rota desconhecida e tratador final de erros.
 app.use(naoEncontrado)
 app.use(tratadorDeErros)
 
 const server = app.listen(config.port, () => {
-  console.log(`🐾 PetPlus API em http://localhost:${config.port}`)
-  console.log(`   banco: ${config.db.host}:${config.db.port}/${config.db.database} como ${config.db.user}`)
-  console.log(`   CORS liberado para ${config.cors.origin}`)
+  logger.info({
+    porta: config.port,
+    ambiente: config.env,
+    banco: `${config.db.host}:${config.db.port}/${config.db.database}`,
+    usuarioBanco: config.db.user,
+    cors: config.http.corsOrigins,
+    rateLimit: config.rateLimit.enabled,
+  }, `🐾 PetPlus API em http://localhost:${config.port} (docs em /api/docs)`)
+
+  iniciarAgendador()
 })
 
-// Encerramento limpo: fecha o servidor e o pool antes de sair.
-for (const sinal of ['SIGINT', 'SIGTERM']) {
-  process.on(sinal, async () => {
-    console.log(`\n${sinal} recebido, encerrando...`)
-    server.close(async () => {
-      await closePool()
-      process.exit(0)
-    })
+// ---------------------------------------------------------------------
+// Encerramento limpo
+// ---------------------------------------------------------------------
+
+/** Para de aceitar conexões, espera o que está em voo e fecha o pool. */
+async function encerrar(motivo) {
+  logger.info({ motivo }, 'encerrando a API')
+  pararAgendador()
+  server.close(async () => {
+    await closePool().catch(() => {})
+    logger.info('API encerrada')
+    process.exit(0)
   })
+  // Se algo travar, não ficamos pendurados para sempre.
+  setTimeout(() => process.exit(1), 10_000).unref()
 }
+
+for (const sinal of ['SIGINT', 'SIGTERM']) {
+  process.on(sinal, () => encerrar(sinal))
+}
+
+// Falha não tratada: registrar com contexto e encerrar. Um processo em
+// estado desconhecido servindo tráfego é pior do que um reinício.
+process.on('unhandledRejection', (motivo) => {
+  logger.fatal({ err: motivo }, 'promise rejeitada sem tratamento')
+  encerrar('unhandledRejection')
+})
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'exceção não capturada')
+  encerrar('uncaughtException')
+})
+
+export { app, server }

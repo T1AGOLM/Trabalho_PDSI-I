@@ -1,9 +1,8 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
 import { brl } from '../../utils'
 import { Modal, useToast } from '../../ui'
-
-const MEU_ID = 1
 
 const BENEFICIOS = [
   { id: 1, nome: 'Banho grátis (pet pequeno)', custo: 200, icon: '🛁' },
@@ -14,9 +13,27 @@ const BENEFICIOS = [
 
 export default function CliFidelidade() {
   const toast = useToast()
-  const cliente = db.clientes.find(c => c.id === MEU_ID)!
-  const [pontos, setPontos] = useState(cliente.pontosFidelidade)
+  // O saldo vem de GET /fidelidade, que é a fonte da verdade (o gatilho do
+  // banco mantém saldo e extrato juntos — RN07).
+  const [pontos, setPontos] = useState(db.fidelidade?.saldo ?? 0)
   const [resgatar, setResgatar] = useState<typeof BENEFICIOS[0] | null>(null)
+  const [enviando, setEnviando] = useState(false)
+
+  const confirmarResgate = async (beneficio: typeof BENEFICIOS[0]) => {
+    setEnviando(true)
+    try {
+      await api.clientes.resgatarPontos(beneficio.custo, beneficio.nome)
+      await sincronizar('fidelidade')
+      setPontos(db.fidelidade?.saldo ?? 0)
+      setResgatar(null)
+      toast(`Benefício “${beneficio.nome}” resgatado! Apresente o código no petshop.`, 'ok')
+    } catch (err) {
+      // Saldo insuficiente (RN07) chega traduzido do banco.
+      toast(err instanceof ApiError ? err.mensagem : 'Não foi possível resgatar.', 'err')
+    } finally {
+      setEnviando(false)
+    }
+  }
 
   const nivel = pontos >= 500 ? { nome: 'Ouro', prox: null, icone: '🥇' }
     : pontos >= 250 ? { nome: 'Prata', prox: 500, icone: '🥈' }
@@ -83,17 +100,14 @@ export default function CliFidelidade() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setResgatar(null)}>Voltar</button>
-              <button className="btn btn-primary" onClick={() => {
-                setPontos(p => p - resgatar.custo)
-                setResgatar(null)
-                toast(`Benefício “${resgatar.nome}” resgatado! Apresente o código no petshop.`, 'ok')
-              }}>Confirmar resgate</button>
+              <button className="btn btn-primary" disabled={enviando} onClick={() => confirmarResgate(resgatar)}>Confirmar resgate</button>
             </>
           }>
           <div className="kv"><span className="k">Benefício</span><span className="v">{resgatar.nome}</span></div>
           <div className="kv"><span className="k">Custo</span><span className="v">{resgatar.custo} pts</span></div>
           <div className="kv"><span className="k">Saldo atual</span><span className="v">{pontos} pts</span></div>
           <div className="kv"><span className="k">Saldo após resgate</span><span className="v">{pontos - resgatar.custo} pts</span></div>
+          <div className="alert info mt-12" style={{ marginBottom: 0 }}>O débito é gravado no extrato no momento da confirmação (RF20).</div>
         </Modal>
       )}
     </div>

@@ -2,9 +2,7 @@ import React, { useState } from 'react'
 import { db } from '../../data'
 import { fmtDate } from '../../utils'
 import { EmptyState } from '../../ui'
-import { useNav } from '../../shell'
-
-const MEU_ID = 1
+import { useNav, useMeuId } from '../../shell'
 
 const TIPO_META: Record<string, { icon: string; label: string }> = {
   'vacina': { icon: '💉', label: 'Vacina' },
@@ -15,9 +13,10 @@ const TIPO_META: Record<string, { icon: string; label: string }> = {
 
 export default function CliHistorico() {
   const nav = useNav()
-  const [petId, setPetId] = useState(1)
-  const meusPets = db.pets.filter(p => p.clienteId === MEU_ID)
-  const pet = meusPets.find(p => p.id === petId)!
+  const meuId = useMeuId()
+  const meusPets = db.pets.filter(p => p.clienteId === meuId)
+  const [petId, setPetId] = useState(meusPets[0]?.id ?? 0)
+  const pet = meusPets.find(p => p.id === petId)
 
   const regs = db.registrosSaude.filter(r => r.petId === petId).sort((a, b) => b.data.localeCompare(a.data))
 
@@ -40,6 +39,7 @@ export default function CliHistorico() {
         ))}
       </div>
 
+      {!pet ? <div className="card"><EmptyState icon="🐾" title="Nenhum pet cadastrado" sub="Cadastre um pet para acompanhar o histórico de saúde." /></div> : (
       <div className="grid-2" style={{ alignItems: 'start' }}>
         <div className="card card-pad">
           <div className="flex mb-16" style={{ gap: 14 }}>
@@ -75,6 +75,7 @@ export default function CliHistorico() {
           <button className="btn btn-outline btn-block mt-12" onClick={() => nav('cli-agendar')}>📅 Agendar consulta</button>
         </div>
       </div>
+      )}
     </div>
   )
 }

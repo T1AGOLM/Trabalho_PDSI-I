@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
-import { fmtDate, petLabel } from '../../utils'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
+import { fmtDate, petLabel, todayISO } from '../../utils'
 import { Modal, useToast, Field, EmptyState } from '../../ui'
 import type { RegistroSaude } from '../../types'
 
@@ -13,12 +14,13 @@ const TIPO_META: Record<string, { icon: string; label: string }> = {
 
 export default function ColabHistorico() {
   const toast = useToast()
-  const [petId, setPetId] = useState(1)
+  const [petId, setPetId] = useState(db.pets[0]?.id ?? 1)
   const [regs, setRegs] = useState<RegistroSaude[]>([...db.registrosSaude])
   const [novoOpen, setNovoOpen] = useState(false)
   const [tipo, setTipo] = useState<RegistroSaude['tipo']>('vacina')
-  const [data, setData] = useState('2026-09-12')
+  const [data, setData] = useState(todayISO())
   const [desc, setDesc] = useState('')
+  const [enviando, setEnviando] = useState(false)
 
   const doPet = regs
     .filter(r => r.petId === petId)
@@ -82,11 +84,20 @@ export default function ColabHistorico() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setNovoOpen(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={() => {
+              <button className="btn btn-primary" disabled={enviando} onClick={async () => {
                 if (!desc.trim()) { toast('Descreva o registro.', 'err'); return }
-                setRegs(rs => [{ id: Math.max(...regs.map(r => r.id)) + 1, petId, data, tipo, descricao: desc }, ...rs])
-                setNovoOpen(false); setDesc('')
-                toast('Registro adicionado à linha do tempo do pet (UC13).', 'ok')
+                setEnviando(true)
+                try {
+                  await api.registrosSaude.criar({ petId, tipo, data, descricao: desc.trim() })
+                  await sincronizar('registrosSaude')
+                  setRegs([...db.registrosSaude])
+                  setNovoOpen(false); setDesc('')
+                  toast('Registro gravado na linha do tempo do pet (UC13).', 'ok')
+                } catch (err) {
+                  toast(err instanceof ApiError ? err.mensagem : 'Não foi possível gravar o registro.', 'err')
+                } finally {
+                  setEnviando(false)
+                }
               }}>✓ Adicionar registro</button>
             </>
           }>

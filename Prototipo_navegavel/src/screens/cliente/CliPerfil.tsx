@@ -1,18 +1,34 @@
 import React, { useState } from 'react'
-import { db } from '../../data'
+import { db, sincronizar } from '../../data'
+import { api, ApiError } from '../../api'
 import { useToast, Field } from '../../ui'
-
-const MEU_ID = 1
 
 export default function CliPerfil() {
   const toast = useToast()
-  const cliente = db.clientes.find(c => c.id === MEU_ID)!
-  const [nome, setNome] = useState(cliente.nome)
-  const [email, setEmail] = useState(cliente.email)
-  const [telefone, setTelefone] = useState(cliente.telefone)
-  const [endereco, setEndereco] = useState(cliente.endereco)
+  // A ficha do próprio tutor vem de GET /clientes/:id (o servidor libera o
+  // tutor para ler o próprio cadastro — RN10) e é carregada com o perfil.
+  const cliente = db.clienteAtual
+  const [nome, setNome] = useState(cliente?.nome ?? '')
+  const [email, setEmail] = useState(cliente?.email ?? '')
+  const [telefone, setTelefone] = useState(cliente?.telefone ?? '')
+  const [endereco, setEndereco] = useState(cliente?.endereco ?? '')
   const [emailNotif, setEmailNotif] = useState(true)
   const [pushNotif, setPushNotif] = useState(true)
+  const [salvando, setSalvando] = useState(false)
+
+  const salvar = async () => {
+    if (!cliente) return
+    setSalvando(true)
+    try {
+      await api.clientes.atualizar(cliente.id, { nome, email, telefone, endereco })
+      await sincronizar('fidelidade') // recarrega ficha + pontos numa passada
+      toast('Perfil atualizado no banco.', 'ok')
+    } catch (err) {
+      toast(err instanceof ApiError ? err.mensagem : 'Não foi possível salvar o perfil.', 'err')
+    } finally {
+      setSalvando(false)
+    }
+  }
 
   return (
     <div>
@@ -33,7 +49,9 @@ export default function CliPerfil() {
             <Field label="Endereço" full><input value={endereco} onChange={e => setEndereco(e.target.value)} /></Field>
           </div>
           <div className="form-actions">
-            <button className="btn btn-primary" onClick={() => toast('Perfil atualizado (simulado).', 'ok')}>Salvar alterações</button>
+            <button className="btn btn-primary" disabled={salvando || !cliente} onClick={salvar}>
+              {salvando ? 'Salvando…' : 'Salvar alterações'}
+            </button>
           </div>
         </div>
 
