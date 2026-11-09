@@ -291,7 +291,7 @@ export const openapi = {
       delete: { tags: ['Clientes'], summary: 'Exclusão lógica — só GESTOR (RF03/RN03)', parameters: [idParam()], responses: respostas(200) },
     },
     '/clientes/{id}/reativar': {
-      post: { tags: ['Clientes'], summary: 'Reativa tutor excluído — só GESTOR (RF03)', parameters: [idParam()], responses: respostas(200) },
+      post: { tags: ['Clientes'], summary: 'Reativa tutor sem reativar pets automaticamente — só GESTOR (RF03)', parameters: [idParam()], responses: respostas(200) },
     },
     '/clientes/{id}/fidelidade': {
       get: { tags: ['Clientes'], summary: 'Saldo e extrato de pontos (RF20)', parameters: [idParam()], responses: respostas(200) },
@@ -309,6 +309,9 @@ export const openapi = {
       get: { tags: ['Pets'], summary: 'Detalhe do pet', parameters: [idParam()], responses: respostas(200) },
       patch: { tags: ['Pets'], summary: 'Atualiza pet (RF03)', parameters: [idParam()], responses: respostas(200) },
       delete: { tags: ['Pets'], summary: 'Exclusão lógica — só GESTOR', parameters: [idParam()], responses: respostas(200) },
+    },
+    '/pets/{id}/reativar': {
+      post: { tags: ['Pets'], summary: 'Reativa pet de tutor ativo — só GESTOR (RF03/RN03)', parameters: [idParam()], responses: respostas(200) },
     },
     '/pets/{id}/historico': {
       get: { tags: ['Pets'], summary: 'Linha do tempo de saúde (RF11/RF21)', parameters: [idParam()], responses: respostas(200) },

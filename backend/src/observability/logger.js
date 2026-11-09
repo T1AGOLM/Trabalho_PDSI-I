@@ -29,6 +29,14 @@ export const logger = pino({
   // Nunca logar segredo: senhas, tokens e cabeçalhos de autorização.
   redact: {
     paths: [
+      'texto',
+      'mensagem',
+      '*.texto',
+      '*.mensagem',
+      'token',
+      'link',
+      'refreshToken',
+      '*.link',
       'req.headers.authorization',
       'req.headers.cookie',
       'res.headers["set-cookie"]',

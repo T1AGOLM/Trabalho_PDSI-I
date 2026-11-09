@@ -156,10 +156,10 @@ export const cancelar = ({ tenantId, usuarioId }, { id, motivo }) =>
   })
 
 /**
- * Conclui o atendimento (RF17) e credita os pontos de fidelidade do tutor
- * na mesma transação — a mesma regra do PDV (RF20).
+ * Conclui o atendimento (RF17), registra o histórico (RF11/RF21) e credita
+ * os pontos de fidelidade na mesma transação.
  */
-export const concluir = ({ tenantId, usuarioId }, id) =>
+export const concluir = ({ tenantId, usuarioId }, id, observacao) =>
   withTransaction({ tenantId, usuarioId }, async (db) => {
     const { rows } = await db.query(
       `UPDATE agendamento SET status = 'concluído'
@@ -169,6 +169,19 @@ export const concluir = ({ tenantId, usuarioId }, id) =>
     )
     if (!rows[0]) return null
 
+    // UPDATE condicional impede duas conclusões e dois registros concorrentes.
+    await db.query(
+      `INSERT INTO registro_saude (petshop_id, pet_id, tipo, data, descricao)
+       SELECT a.petshop_id, a.pet_id, 'atendimento',
+              (a.data_hora AT TIME ZONE ps.timezone)::date,
+              'Atendimento #' || a.id || ': ' || s.nome ||
+              CASE WHEN COALESCE($3, '') = '' THEN '' ELSE E'\\n' || $3 END
+         FROM agendamento a
+         JOIN petshop ps ON ps.id = a.petshop_id
+         JOIN servico s ON s.id = a.servico_id
+        WHERE a.id = $1 AND a.petshop_id = $2`,
+      [id, tenantId, observacao ?? null],
+    )
     const taxa = await db.query('SELECT pontos_por_real FROM petshop WHERE id = $1', [tenantId])
     const pontos = Math.floor(Number(rows[0].valor) * Number(taxa.rows[0]?.pontos_por_real ?? 0))
     if (pontos > 0) {

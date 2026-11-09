@@ -116,7 +116,7 @@ export default function PDV() {
       toast(`Venda #${r.id} registrada — estoque atualizado (UC09).`, 'ok')
     } catch (err) {
       // As mensagens vêm do banco: RN02 (estoque), RF25 (pagamento).
-      toast(err instanceof ApiError ? err.message : 'Não foi possível registrar a venda.', 'err')
+      toast(err instanceof ApiError ? err.mensagem : 'Não foi possível registrar a venda.', 'err')
     } finally {
       setFinalizando(false)
     }

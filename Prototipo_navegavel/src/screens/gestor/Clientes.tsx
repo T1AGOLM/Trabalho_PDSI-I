@@ -16,7 +16,9 @@ export default function Clientes() {
   const [novoOpen, setNovoOpen] = useState(false)
   const [editCli, setEditCli] = useState<Cliente | null>(null)
   const [editPet, setEditPet] = useState<Pet | null>(null)
-  const [inativar, setInativar] = useState<{ tipo: 'cli' | 'pet'; item: Cliente | Pet } | null>(null)
+  const [inativar, setInativar] = useState<{ tipo: 'cli' | 'pet'; item: Cliente | Pet; reativar?: boolean } | null>(null)
+  const [alterandoStatus, setAlterandoStatus] = useState(false)
+  const operacaoStatus = React.useRef(false)
   const [detalhe, setDetalhe] = useState<Cliente | null>(null)
 
   /** Relê tutores e pets do banco depois de qualquer escrita. */
@@ -26,7 +28,7 @@ export default function Clientes() {
     setPets([...db.pets])
   }
 
-  const filtra = (texto: string) => texto.toLowerCase().includes(busca.toLowerCase())
+  const filtra = (texto: string | null | undefined) => (texto ?? '').toLowerCase().includes(busca.toLowerCase())
 
   const clientesFiltrados = clientes.filter(c => filtra(c.nome) || filtra(c.email) || filtra(c.telefone))
   const petsFiltrados = pets.filter(p => filtra(p.nome) || filtra(p.raca) || filtra(clienteNomeSafe(p.clienteId)))
@@ -72,7 +74,7 @@ export default function Clientes() {
                         <div className="bold">{c.nome}</div>
                         <div className="tiny muted">{c.email}</div>
                       </td>
-                      <td>{c.telefone}<div className="tiny muted">{c.endereco.split('—')[1] ?? c.endereco}</div></td>
+                      <td>{c.telefone}<div className="tiny muted">{c.endereco?.split('—')[1] ?? (c.endereco || '—')}</div></td>
                       <td>{petsDoCliente(c.id).map(p => p.nome).join(', ') || '—'}</td>
                       <td><span className="badge badge-teal">{c.pontosFidelidade} pts</span></td>
                       <td><span className={`badge ${c.ativo ? 'badge-green' : 'badge-gray'}`}>{c.ativo ? 'Ativo' : 'Inativo'}</span></td>
@@ -80,7 +82,7 @@ export default function Clientes() {
                         <div className="actions">
                           <button className="btn btn-ghost btn-sm" onClick={() => setDetalhe(c)}>Ver</button>
                           <button className="btn btn-outline btn-sm" onClick={() => setEditCli(c)}>Editar</button>
-                          <button className="btn btn-danger btn-sm" onClick={() => setInativar({ tipo: 'cli', item: c })}>Excluir</button>
+                          <button className="btn btn-outline btn-sm" onClick={() => setInativar({ tipo: 'cli', item: c, reativar: !c.ativo })}>{c.ativo ? 'Inativar' : 'Reativar'}</button>
                         </div>
                       </td>
                     </tr>
@@ -97,7 +99,7 @@ export default function Clientes() {
           <div className="table-wrap">
             {petsFiltrados.length === 0 ? <EmptyState icon="🔍" title="Nenhum pet encontrado" /> : (
               <table className="tbl">
-                <thead><tr><th>Pet</th><th>Espécie / Raça</th><th>Porte / Idade</th><th>Tutor</th><th>Saúde</th><th className="right">Ações</th></tr></thead>
+                <thead><tr><th>Pet</th><th>Espécie / Raça</th><th>Porte / Idade</th><th>Tutor</th><th>Saúde</th><th>Status</th><th className="right">Ações</th></tr></thead>
                 <tbody>
                   {petsFiltrados.map(p => (
                     <tr key={p.id} className={p.ativo ? '' : 'row-inactive'}>
@@ -106,10 +108,11 @@ export default function Clientes() {
                       <td>{p.porte}<div className="tiny muted">{p.idade} ano(s)</div></td>
                       <td>{clienteNomeSafe(p.clienteId)}</td>
                       <td style={{ maxWidth: 220 }}><span className="tiny muted">{p.observacoesSaude || '—'}</span></td>
+                      <td>{p.ativo ? 'Ativo' : 'Inativo'}</td>
                       <td>
                         <div className="actions">
                           <button className="btn btn-outline btn-sm" onClick={() => setEditPet(p)}>Editar</button>
-                          <button className="btn btn-danger btn-sm" onClick={() => setInativar({ tipo: 'pet', item: p })}>Excluir</button>
+                          <button className="btn btn-outline btn-sm" onClick={() => setInativar({ tipo: 'pet', item: p, reativar: !p.ativo })}>{p.ativo ? 'Inativar' : 'Reativar'}</button>
                         </div>
                       </td>
                     </tr>
@@ -145,7 +148,7 @@ export default function Clientes() {
                 try {
                   await api.clientes.atualizar(editCli.id, {
                     nome: editCli.nome, email: editCli.email,
-                    telefone: editCli.telefone, endereco: editCli.endereco,
+                    telefone: editCli.telefone || undefined, endereco: editCli.endereco ?? '',
                   })
                   await recarregar()
                   setEditCli(null)
@@ -159,9 +162,9 @@ export default function Clientes() {
           <div className="form-grid">
             <Field label="Nome" required><input value={editCli.nome} onChange={e => setEditCli({ ...editCli, nome: e.target.value })} /></Field>
             <Field label="E-mail" required><input value={editCli.email} onChange={e => setEditCli({ ...editCli, email: e.target.value })} /></Field>
-            <Field label="Telefone"><input value={editCli.telefone} onChange={e => setEditCli({ ...editCli, telefone: e.target.value })} /></Field>
+            <Field label="Telefone"><input value={editCli.telefone ?? ''} onChange={e => setEditCli({ ...editCli, telefone: e.target.value })} /></Field>
             <Field label="Pontos de fidelidade"><input type="number" value={editCli.pontosFidelidade} onChange={e => setEditCli({ ...editCli, pontosFidelidade: Number(e.target.value) })} /></Field>
-            <Field label="Endereço" full><input value={editCli.endereco} onChange={e => setEditCli({ ...editCli, endereco: e.target.value })} /></Field>
+            <Field label="Endereço" full><input value={editCli.endereco ?? ''} onChange={e => setEditCli({ ...editCli, endereco: e.target.value })} /></Field>
           </div>
         </Modal>
       )}
@@ -240,20 +243,25 @@ export default function Clientes() {
 
       {/* Inativação (exclusão lógica) */}
       {inativar && (
-        <ConfirmDialog danger title="Inativar cadastro?"
-          message={`Esta é uma exclusão lógica (RF03): o registro de ${inativar.item.nome} será marcado como inativo, e não removido. Somente o Gestor pode excluir cadastros (RN03).`}
-          confirmLabel="Inativar"
-          onCancel={() => setInativar(null)}
+        <ConfirmDialog danger={!inativar.reativar} title={inativar.reativar ? 'Reativar cadastro?' : 'Inativar cadastro?'}
+          message={inativar.reativar
+            ? `Reativar ${inativar.item.nome}?${inativar.tipo === 'cli' ? ' Os pets do tutor devem ser reativados individualmente, na aba Pets.' : ''}`
+            : `Inativar ${inativar.item.nome}? O histórico será preservado.${inativar.tipo === 'cli' ? ' O acesso do cliente será bloqueado e seus pets também serão inativados.' : ''}`}
+          confirmLabel={alterandoStatus ? 'Salvando…' : inativar.reativar ? 'Reativar' : 'Inativar'}
+          onCancel={() => { if (!operacaoStatus.current) setInativar(null) }}
           onConfirm={async () => {
+            if (operacaoStatus.current) return
+            operacaoStatus.current = true; setAlterandoStatus(true)
             try {
-              if (inativar.tipo === 'cli') await api.clientes.inativar(inativar.item.id)
-              else await api.pets.inativar(inativar.item.id)
+              const recurso = inativar.tipo === 'cli' ? api.clientes : api.pets
+              if (inativar.reativar) await recurso.reativar(inativar.item.id)
+              else await recurso.inativar(inativar.item.id)
               await recarregar()
               setInativar(null)
-              toast('Cadastro inativado (exclusão lógica).', 'ok')
+              toast(inativar.reativar ? 'Cadastro reativado.' : 'Cadastro inativado. Histórico preservado.', 'ok')
             } catch (err) {
-              toast(err instanceof ApiError ? err.mensagem : 'Não foi possível inativar.', 'err')
-            }
+              toast(err instanceof ApiError ? err.mensagem : 'Não foi possível alterar o status.', 'err')
+            } finally { operacaoStatus.current = false; setAlterandoStatus(false) }
           }} />
       )}
     </div>
@@ -263,48 +271,66 @@ export default function Clientes() {
 function NovoClienteModal({ onClose, onCriar }: {
   onClose: () => void
   onCriar: (dados: {
-    cliente: { nome: string; email: string; telefone: string; endereco?: string }
+    cliente: { nome: string; email: string; telefone: string; endereco?: string; senha: string }
     pet: { nome: string; especie: string; raca: string; porte: string; idade: number; observacoesSaude?: string }
   }) => Promise<void>
 }) {
   const [enviando, setEnviando] = useState(false)
+  const envioPendente = React.useRef(false)
+  const [senha, setSenha] = useState('')
+  const [confirmacaoSenha, setConfirmacaoSenha] = useState('')
+  const senhaValida = senha.length >= 8 && senha.length <= 72 && /[A-Za-zÀ-ÿ]/.test(senha) && /\d/.test(senha)
+  const validarSenha = () => {
+    if (!senhaValida) return 'A senha deve ter de 8 a 72 caracteres, com ao menos uma letra e um número.'
+    if (senha !== confirmacaoSenha) return 'A confirmação da senha não confere.'
+    return ''
+  }
   const [etapa, setEtapa] = useState(1)
   const [nome, setNome] = useState(''); const [email, setEmail] = useState(''); const [telefone, setTelefone] = useState(''); const [endereco, setEndereco] = useState('')
   const [petNome, setPetNome] = useState(''); const [especie, setEspecie] = useState('Cachorro'); const [raca, setRaca] = useState(''); const [porte, setPorte] = useState('Pequeno'); const [idade, setIdade] = useState('1'); const [obs, setObs] = useState('')
   const [erro, setErro] = useState('')
 
   return (
-    <Modal title="Novo cliente + pet (UC03)" onClose={onClose} size="wide"
+    <Modal title="Novo cliente + pet (UC03)" onClose={() => { if (!envioPendente.current) onClose() }} size="wide"
       footer={
         etapa === 1
           ? <>
             <button className="btn btn-outline" onClick={onClose}>Cancelar</button>
             <button className="btn btn-primary" onClick={() => {
               if (!nome || !email.includes('@') || !telefone) { setErro('Preencha nome, e-mail e telefone.'); return }
+              const erroSenha = validarSenha()
+              if (erroSenha) { setErro(erroSenha); return }
               setErro(''); setEtapa(2)
             }}>Continuar para o pet →</button>
           </>
           : <>
-            <button className="btn btn-outline" onClick={() => setEtapa(1)}>← Voltar</button>
+            <button className="btn btn-outline" disabled={enviando} onClick={() => setEtapa(1)}>← Voltar</button>
             <button className="btn btn-primary" disabled={enviando} onClick={async () => {
-              if (!petNome) { setErro('Informe o nome do pet.'); return }
+              if (envioPendente.current) return
+              if (!petNome.trim()) { setErro('Informe o nome do pet.'); return }
+              const erroSenha = validarSenha()
+              if (erroSenha) { setErro(erroSenha); setEtapa(1); return }
               setErro('')
+              envioPendente.current = true
               setEnviando(true)
               try {
                 await onCriar({
-                  cliente: { nome, email, telefone, ...(endereco ? { endereco } : {}) },
+                  cliente: { nome, email, telefone, senha, ...(endereco ? { endereco } : {}) },
                   pet: {
                     nome: petNome, especie, raca: raca || 'SRD', porte,
                     idade: Number(idade) || 0, ...(obs ? { observacoesSaude: obs } : {}),
                   },
                 })
+              } catch (err) {
+                setErro(err instanceof ApiError ? err.mensagem : 'Não foi possível cadastrar. Verifique a conexão e tente novamente.')
               } finally {
+                envioPendente.current = false
                 setEnviando(false)
               }
             }}>✓ Cadastrar cliente e pet</button>
           </>
       }>
-      {erro && <div className="alert danger">{erro}</div>}
+      {erro && <div role="alert" className="alert danger">{erro}</div>}
       {etapa === 1 ? (
         <>
           <h3 className="mb-12" style={{ fontSize: 14 }}>Dados do tutor</h3>
@@ -313,7 +339,14 @@ function NovoClienteModal({ onClose, onCriar }: {
             <Field label="E-mail" required><input value={email} onChange={e => setEmail(e.target.value)} /></Field>
             <Field label="Telefone" required><input value={telefone} onChange={e => setTelefone(e.target.value)} /></Field>
             <Field label="Endereço"><input value={endereco} onChange={e => setEndereco(e.target.value)} /></Field>
+            <Field label="Senha de acesso" required>
+              <input aria-label="Senha de acesso do cliente" type="password" autoComplete="new-password" maxLength={72} value={senha} onChange={e => setSenha(e.target.value)} />
+            </Field>
+            <Field label="Confirmar senha" required>
+              <input aria-label="Confirmar senha do cliente" type="password" autoComplete="new-password" maxLength={72} value={confirmacaoSenha} onChange={e => setConfirmacaoSenha(e.target.value)} />
+            </Field>
           </div>
+          <div className="alert info mt-12">O cliente poderá entrar com este e-mail e a senha definida aqui. Use de 8 a 72 caracteres, com ao menos uma letra e um número.</div>
         </>
       ) : (
         <>

@@ -1,122 +1,73 @@
-import React, { useState } from 'react'
-import { db } from '../../data'
-import { brl, fmtDateTime } from '../../utils'
-import { Modal, useToast, Field, EmptyState } from '../../ui'
+import React, { useEffect, useRef, useState } from 'react'
+import { api, ApiError } from '../../api'
+import { brl, dataLocalISO, fmtDate, fmtDateTime } from '../../utils'
+import { Field, EmptyState, useToast } from '../../ui'
 import type { TipoRelatorio, FormatoArquivo } from '../../types'
 
-const TIPOS: { id: TipoRelatorio; nome: string; desc: string; icon: string }[] = [
-  { id: 'vendas', nome: 'Relatório de Vendas', desc: 'Vendas do PDV por período, formas de pagamento e ticket médio.', icon: '🧾' },
-  { id: 'agendamentos', nome: 'Relatório de Agendamentos', desc: 'Serviços agendados, cancelamentos e taxa de ocupação.', icon: '📅' },
-  { id: 'estoque', nome: 'Relatório de Estoque', desc: 'Posição de estoque, mínimos, validades e reposição sugerida.', icon: '📦' },
-  { id: 'financeiro', nome: 'Relatório Financeiro', desc: 'Faturamento consolidado por dia, semana e mês.', icon: '💰' },
-]
-
+const TIPOS = ['vendas', 'agendamentos', 'estoque', 'financeiro'] as const
+type Previa = Awaited<ReturnType<typeof api.relatorios.previa>>
 export default function Relatorios() {
   const toast = useToast()
   const [tipo, setTipo] = useState<TipoRelatorio>('vendas')
-  const [de, setDe] = useState('2026-09-01')
-  const [ate, setAte] = useState('2026-09-12')
-  const [gerado, setGerado] = useState<{ tipo: string; formato: FormatoArquivo; linhas: { k: string; v: string }[] } | null>(null)
-
-  const gerar = (formato: FormatoArquivo) => {
-    // Mock de conteúdo conforme o tipo
-    const conteudo: Record<TipoRelatorio, { k: string; v: string }[]> = {
-      vendas: [
-        { k: 'Total de vendas', v: '5' },
-        { k: 'Faturamento bruto', v: brl(641.8) },
-        { k: 'Ticket médio', v: brl(128.36) },
-        { k: 'Forma mais usada', v: 'PIX (2 de 5)' },
-        { k: 'Vendas estornadas', v: '1' },
-      ],
-      agendamentos: [
-        { k: 'Agendamentos criados', v: '10' },
-        { k: 'Confirmados', v: '6' },
-        { k: 'Concluídos', v: '3' },
-        { k: 'Cancelados', v: '1' },
-        { k: 'Taxa de ocupação', v: '72%' },
-      ],
-      estoque: [
-        { k: 'Produtos cadastrados', v: '8' },
-        { k: 'Abaixo do mínimo', v: '2' },
-        { k: 'Validade ≤ 30 dias', v: '2' },
-        { k: 'Valor em estoque', v: brl(2830.2) },
-        { k: 'Reposição sugerida', v: 'Shampoo Neutro, Areia Higiênica' },
-      ],
-      financeiro: [
-        { k: 'Faturamento do dia', v: brl(487.6) },
-        { k: 'Faturamento da semana', v: brl(3210.4) },
-        { k: 'Faturamento do mês', v: brl(12480.9) },
-        { k: 'Serviços (estimado)', v: brl(8630.0) },
-        { k: 'Produtos (estimado)', v: brl(3850.9) },
-      ],
-    }
-    setGerado({ tipo, formato, linhas: conteudo[tipo] })
+  const hoje = dataLocalISO()
+  const [de, setDe] = useState(hoje.slice(0, 8) + '01')
+  const [ate, setAte] = useState(hoje)
+  const [previa, setPrevia] = useState<Previa | null>(null)
+  const [recentes, setRecentes] = useState<any[]>([])
+  const [erro, setErro] = useState('')
+  const [ocupado, setOcupado] = useState(false)
+  const [erroHistorico, setErroHistorico] = useState('')
+  const consulta = useRef(0)
+  const emOperacao = useRef(false)
+  const carregarHistorico = async () => {
+    try { setRecentes(await api.relatorios.listar()); setErroHistorico('') }
+    catch { setErroHistorico('Não foi possível consultar o histórico de exportações.') }
   }
-
-  return (
-    <div>
-      <div className="page-head">
-        <div>
-          <h1>Relatórios</h1>
-          <div className="sub">Geração e exportação em PDF e planilha (UC22 · RF27)</div>
-        </div>
-      </div>
-
-      <div className="grid-2" style={{ alignItems: 'start' }}>
-        <div className="card card-pad">
-          <h3 className="mb-16" style={{ fontSize: 15 }}>Nova geração</h3>
-          <Field label="Tipo de relatório" required>
-            <select value={tipo} onChange={e => setTipo(e.target.value as TipoRelatorio)}>
-              {TIPOS.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
-            </select>
-          </Field>
-          <div className="form-grid mt-16">
-            <Field label="Período — de" required><input type="date" value={de} onChange={e => setDe(e.target.value)} /></Field>
-            <Field label="Período — até" required><input type="date" value={ate} onChange={e => setAte(e.target.value)} /></Field>
-          </div>
-          <div className="flex mt-16" style={{ gap: 10 }}>
-            <button className="btn btn-primary" onClick={() => gerar('PDF')}>📄 Gerar PDF</button>
-            <button className="btn btn-outline" onClick={() => gerar('Excel')}>📊 Gerar Excel</button>
-            <button className="btn btn-outline" onClick={() => gerar('CSV')}>🗒 CSV</button>
-          </div>
-          <div className="alert info mt-16" style={{ marginBottom: 0 }}>Se não houver dados no período, o sistema informa a ausência de registros (UC22 — 1a).</div>
-        </div>
-
-        <div>
-          <div className="card mb-16">
-            <div className="card-head"><h3>Pré-visualização</h3>{gerado && <span className="badge badge-teal">{gerado.formato}</span>}</div>
-            <div className="card-pad">
-              {!gerado ? <EmptyState icon="📑" title="Nenhum relatório gerado" sub="Escolha o tipo e o período e clique em gerar." /> : (
-                <>
-                  <div className="bold mb-12">{TIPOS.find(t => t.id === gerado.tipo)?.nome}</div>
-                  <div className="tiny muted mb-16">Período: {de.split('-').reverse().join('/')} a {ate.split('-').reverse().join('/')}</div>
-                  {gerado.linhas.map(l => <div className="kv" key={l.k}><span className="k">{l.k}</span><span className="v">{l.v}</span></div>)}
-                  <button className="btn btn-primary btn-block mt-16" onClick={() => { window.print(); toast(`Download do ${gerado.formato} simulado (protótipo).`, 'info') }}>
-                    ⬇ Baixar arquivo ({gerado.formato})
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-head"><h3>Relatórios gerados recentemente</h3></div>
-            <table className="tbl">
-              <thead><tr><th>Tipo</th><th>Período</th><th>Formato</th><th>Gerado em</th></tr></thead>
-              <tbody>
-                {db.relatorios.map(r => (
-                  <tr key={r.id}>
-                    <td className="bold" style={{ textTransform: 'capitalize' }}>{r.tipo}</td>
-                    <td>{r.periodo}</td>
-                    <td><span className="badge badge-gray">{r.formato}</span></td>
-                    <td className="small">{fmtDateTime(r.dataGeracao)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+  useEffect(() => { void carregarHistorico(); return () => { consulta.current++ } }, [])
+  const filtros = () => tipo === 'estoque' ? { tipo } : { tipo, de, ate }
+  const validar = () => {
+    if (tipo !== 'estoque' && (!de || !ate || de > ate)) { setErro('Informe um período válido: a data inicial deve ser anterior ou igual à final.'); return false }
+    return true
+  }
+  const gerar = async (formato?: FormatoArquivo) => {
+    if (emOperacao.current || !validar()) return
+    const atual = ++consulta.current
+    const params = filtros()
+    emOperacao.current = true; setOcupado(true); setErro('')
+    try {
+      if (formato) {
+        const blob = await api.relatorios.exportar({ ...params, formato })
+        if (atual !== consulta.current) return
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url; link.download = `${params.tipo}-${dataLocalISO()}.${formato === 'PDF' ? 'pdf' : 'csv'}`
+        document.body.appendChild(link); link.click(); link.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+        toast('Arquivo gerado. Download solicitado ao navegador.', 'ok')
+        await carregarHistorico()
+      } else {
+        const resultado = await api.relatorios.previa(params)
+        if (atual === consulta.current) setPrevia(resultado)
+      }
+    } catch (e) { if (atual === consulta.current) setErro(e instanceof ApiError ? e.mensagem : 'Não foi possível gerar o relatório.') }
+    finally { emOperacao.current = false; setOcupado(false) }
+  }
+  const alterar = (acao: () => void) => { consulta.current++; setPrevia(null); setErro(''); acao() }
+  return <div>
+    <div className="page-head"><div><h1>Relatórios</h1><div className="sub">Consulta e exportação de dados em PDF e CSV</div></div></div>
+    {erro && <div role="alert" className="alert danger">{erro}</div>}
+    <div className="card card-pad mb-16"><fieldset disabled={ocupado} style={{ border: 0, padding: 0 }}><div className="form-grid">
+      <Field label="Tipo de relatório"><select aria-label="Tipo de relatório" value={tipo} onChange={e => alterar(() => setTipo(e.target.value as TipoRelatorio))}>{TIPOS.map(t => <option key={t} value={t}>{t[0].toUpperCase() + t.slice(1)}</option>)}</select></Field>
+      {tipo !== 'estoque' && <><Field label="Data inicial"><input aria-label="Data inicial do relatório" type="date" value={de} onChange={e => alterar(() => setDe(e.target.value))} /></Field><Field label="Data final"><input aria-label="Data final do relatório" type="date" value={ate} onChange={e => alterar(() => setAte(e.target.value))} /></Field></>}
+    </div>{tipo === 'estoque' && <p className="small muted">Posição atual do estoque; não representa uma posição histórica por período.</p>}
+    <div className="flex mt-16"><button className="btn btn-primary" onClick={() => void gerar()}>Consultar prévia</button><button className="btn btn-outline" onClick={() => void gerar('PDF')}>Baixar PDF</button><button className="btn btn-outline" onClick={() => void gerar('CSV')}>Baixar CSV</button></div></fieldset></div>
+    {ocupado && <div role="status" className="alert info">Consultando dados e preparando o relatório…</div>}
+    <div className="card mb-16"><div className="card-head"><h3>Pré-visualização</h3>{tipo !== 'estoque' && previa && <span className="hint">{fmtDate(de)} a {fmtDate(ate)}</span>}</div>
+      {!previa ? <EmptyState icon="📑" title="Consulte uma prévia para visualizar os dados" /> : !previa.linhas.length ? <EmptyState icon="📋" title="Nenhum registro encontrado" /> : <div className="table-wrap"><table className="tbl"><thead><tr>{previa.colunas.map(c => <th key={c.campo}>{c.rotulo}</th>)}</tr></thead><tbody>{previa.linhas.map((l, i) => <tr key={i}>{previa.colunas.map(c => <td key={c.campo}>{l[c.campo] == null || l[c.campo] === '' ? '—' : c.dinheiro ? brl(l[c.campo]) : c.campo === 'dataHora' ? fmtDateTime(l[c.campo]) : String(l[c.campo])}</td>)}</tr>)}</tbody></table></div>}
     </div>
-  )
+    <div className="card"><div className="card-head"><h3>Histórico de exportações</h3><button className="btn btn-outline btn-sm" disabled={ocupado} onClick={() => void carregarHistorico()}>Atualizar histórico</button></div>
+      {erroHistorico && <div role="alert" className="alert danger">{erroHistorico}</div>}
+      {!recentes.length ? <EmptyState icon="📋" title="Nenhuma exportação registrada" /> : <div className="table-wrap"><table className="tbl"><thead><tr><th>Tipo</th><th>Período</th><th>Formato</th><th>Gerado em</th></tr></thead><tbody>{recentes.map(r => <tr key={r.id}><td>{r.tipo}</td><td>{r.periodo}</td><td>{r.formato}</td><td>{fmtDateTime(r.dataGeracao)}</td></tr>)}</tbody></table></div>}
+    </div>
+  </div>
 }

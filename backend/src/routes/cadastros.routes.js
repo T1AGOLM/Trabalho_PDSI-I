@@ -11,7 +11,7 @@ import { ErroDeNegocio, ErroNaoEncontrado, ErroDePermissao, rota } from '../midd
 import {
   validar, idParam, dataISO, dataOpcional, textoOpcional, idOpcional, booleanoOpcional,
   enumOpcional, inteiroOpcional, dinheiro, dinheiroOpcional, email as schemaEmail,
-  telefone as schemaTelefone,
+  telefone as schemaTelefone, senha as schemaSenha,
 } from '../middleware/validar.js'
 import { schemaPaginacao, schemaOrdenacao, paginacao } from '../http/paginacao.js'
 import { config } from '../config/env.js'
@@ -69,7 +69,7 @@ const corpoCliente = z.object({
   telefone: schemaTelefone.optional(),
   cpf: z.string().regex(/^\d{11}$/, 'CPF deve ter 11 dígitos').optional(),
   endereco: z.string().trim().max(255).optional(),
-  senha: z.string().min(8).max(72).optional(),
+  senha: schemaSenha.optional(),
   consentimento: z.coerce.boolean().default(true),
   pet: z.object({
     nome: z.string().trim().min(1).max(100),
@@ -265,12 +265,20 @@ cadastrosRoutes.patch('/pets/:id', autenticar,
     res.json(atualizado)
   }))
 
-cadastrosRoutes.delete('/pets/:id', autenticar, validar({ params: idParam }),
+cadastrosRoutes.delete('/pets/:id', autenticar, exigirPerfil('GESTOR'), validar({ params: idParam }),
   rota(async (req, res) => {
     await exigirDonoDoPet(req, req.paramsValidos.id)
     const inativado = await pets.inativar(contexto(req), req.paramsValidos.id)
     if (!inativado) throw new ErroNaoEncontrado('Pet')
     res.json(inativado)
+  }))
+
+/** Reativação administrativa: somente gestor (RN03). */
+cadastrosRoutes.post('/pets/:id/reativar', autenticar, exigirPerfil('GESTOR'), validar({ params: idParam }),
+  rota(async (req, res) => {
+    const pet = await pets.reativar(contexto(req), req.paramsValidos.id)
+    if (!pet) throw new ErroNaoEncontrado('Pet')
+    res.json(pet)
   }))
 
 // =====================================================================

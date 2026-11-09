@@ -1,3 +1,5 @@
+import type { Agendamento } from './types'
+
 // ===== Cliente da API PetPlus =====
 //
 // Ponte única entre a interface e o backend. Nada mais no front fala com a
@@ -6,9 +8,9 @@
 //
 // Decisões de segurança que valem a pena registrar:
 //
-//  * **Nenhum token em JavaScript.** A sessão vive em cookies `httpOnly`
-//    gravados pelo servidor no login. Sem token no `localStorage`, um XSS
-//    não consegue roubar a sessão — o script da página não enxerga o cookie.
+//  * A interface usa cookies `httpOnly` e não persiste os tokens devolvidos
+//    para clientes de API. Isso reduz a exposição persistente a XSS;
+//    não impede um script malicioso de agir em nome do usuário.
 //  * **`credentials: 'include'`** para o cookie viajar junto, e a base é
 //    relativa (`/api`) para que front e API fiquem na mesma origem: cookie
 //    de primeira parte, sem CORS e sem `SameSite=None`.
@@ -17,7 +19,23 @@
 //    requisição original é repetida. O refresh token gira a cada uso, então
 //    uma sessão expirada não derruba o usuário no meio do trabalho.
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api'
+const API_URL = (import.meta.env?.VITE_API_URL as string | undefined) ?? '/api'
+
+let geracao = 0
+let controle = new AbortController()
+export const geracaoDaSessao = () => geracao
+
+/** Cada saída/troca de conta invalida também respostas já em trânsito. */
+export function invalidarRequisicoes() {
+  geracao++
+  controle.abort()
+  controle = new AbortController()
+  renovacao = null
+}
+
+function exigirGeracao(atual: number) {
+  if (atual !== geracao) throw new DOMException('Resposta de sessão anterior descartada.', 'AbortError')
+}
 
 /** Erro da API já traduzido, com o status HTTP e o código de negócio. */
 export class ApiError extends Error {
@@ -49,6 +67,7 @@ type Opcoes = {
   corpo?: unknown
   /** Sem renovação de sessão e sem repetir em 401 — login, cadastro, refresh. */
   anonimo?: boolean
+  arquivo?: boolean
   sinal?: AbortSignal
 }
 
@@ -74,6 +93,7 @@ let renovacao: Promise<boolean> | null = null
  * servidor derrubaria a sessão inteira (proteção contra reuso).
  */
 function renovarSessao(): Promise<boolean> {
+  const atual = geracao
   renovacao ??= (async () => {
     try {
       await chamar('/auth/refresh', { metodo: 'POST', anonimo: true })
@@ -81,7 +101,7 @@ function renovarSessao(): Promise<boolean> {
     } catch {
       return false
     } finally {
-      renovacao = null
+      if (atual === geracao) renovacao = null
     }
   })()
   return renovacao
@@ -91,7 +111,8 @@ function renovarSessao(): Promise<boolean> {
 // Núcleo HTTP
 // ---------------------------------------------------------------------
 
-async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal }: Opcoes): Promise<T> {
+async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal, arquivo }: Opcoes): Promise<T> {
+  const atual = geracao
   let resposta: Response
   try {
     resposta = await fetch(API_URL + caminho, {
@@ -99,7 +120,7 @@ async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal }: Opco
       credentials: 'include',
       headers: corpo !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
-      signal: sinal,
+      signal: sinal ?? controle.signal,
     })
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') throw err
@@ -110,9 +131,17 @@ async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal }: Opco
     )
   }
 
+  exigirGeracao(atual)
   if (resposta.status === 204) return undefined as T
 
+  if (resposta.ok && arquivo) {
+    const blob = await resposta.blob()
+    exigirGeracao(atual)
+    return blob as T
+  }
+
   const texto = await resposta.text()
+  exigirGeracao(atual)
   let dados: any = null
   if (texto) {
     try {
@@ -136,13 +165,17 @@ async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal }: Opco
 }
 
 async function requisitar<T>(caminho: string, opcoes: Opcoes = {}): Promise<T> {
+  const atual = geracao
   try {
     return await chamar<T>(caminho, opcoes)
   } catch (err) {
     // Token expirado (30 min): renova e repete a MESMA chamada, uma vez.
     // O usuário não vê nada acontecer.
-    if (err instanceof ApiError && err.status === 401 && !opcoes.anonimo) {
-      if (await renovarSessao()) return chamar<T>(caminho, opcoes)
+    if (err instanceof ApiError && err.status === 401 && !opcoes.anonimo && atual === geracao) {
+      if (await renovarSessao()) {
+        exigirGeracao(atual)
+        return chamar<T>(caminho, opcoes)
+      }
     }
     throw err
   }
@@ -166,6 +199,7 @@ export async function buscarTudo<T>(
   params: Record<string, unknown> = {},
   sinal?: AbortSignal,
 ): Promise<T[]> {
+  const atual = geracao
   const primeira = await requisitar<{ dados: T[]; pagina: number; paginas: number }>(
     caminho + qs({ ...params, pagina: 1, limite: LIMITE_MAX }),
     { sinal },
@@ -174,12 +208,14 @@ export async function buscarTudo<T>(
   const paginas = Math.min(Number(primeira.paginas ?? 1), PAGINAS_MAX)
 
   for (let pagina = 2; pagina <= paginas; pagina += 1) {
+    exigirGeracao(atual)
     const proxima = await requisitar<{ dados: T[] }>(
       caminho + qs({ ...params, pagina, limite: LIMITE_MAX }),
       { sinal },
     )
     linhas.push(...(proxima.dados ?? []))
   }
+  exigirGeracao(atual)
   return linhas
 }
 
@@ -213,6 +249,7 @@ export const auth = {
     telefone?: string
     endereco?: string
     consentimento: boolean
+    pet?: { nome: string; especie: string; raca?: string; porte?: string; idade?: number; observacoesSaude?: string }
   }) =>
     requisitar<{ usuario: UsuarioLogado }>('/auth/cadastro', {
       metodo: 'POST',
@@ -220,7 +257,7 @@ export const auth = {
       corpo: dados,
     }),
 
-  logout: () => requisitar<{ encerrada: boolean }>('/auth/logout', { metodo: 'POST' }),
+  logout: () => requisitar<{ encerrada: boolean }>('/auth/logout', { metodo: 'POST', anonimo: true }),
 
   recuperarSenha: (email: string) =>
     requisitar<{ enviado: boolean; token?: string }>('/auth/recuperar-senha', {
@@ -260,7 +297,7 @@ export const clientes = {
     endereco?: string
     senha?: string
     consentimento?: boolean
-    pet?: { nome: string; especie?: string; raca?: string; porte?: string; idade?: number; observacoesSaude?: string }
+      pet?: { nome: string; especie?: string; raca?: string; porte?: string; idade?: number; observacoesSaude?: string }
   }) => requisitar<any>('/clientes', { metodo: 'POST', corpo: dados }),
 
   atualizar: (id: number, dados: Record<string, unknown>) =>
@@ -309,6 +346,7 @@ export const pets = {
     requisitar<any>(`/pets/${id}`, { metodo: 'PATCH', corpo: dados }),
 
   inativar: (id: number) => requisitar<any>(`/pets/${id}`, { metodo: 'DELETE' }),
+  reativar: (id: number) => requisitar<any>(`/pets/${id}/reativar`, { metodo: 'POST' }),
 }
 
 export const registrosSaude = {
@@ -425,11 +463,11 @@ export const agendamentos = {
   agendaDoDia: (data: string) => requisitar<any[]>(`/agenda/dia${qs({ data })}`),
 
   /** Horários livres do profissional no dia (RF04/RF05), já sem conflito nem bloqueio. */
-  horariosLivres: (params: { colaboradorId: number; data: string; duracao?: number }) =>
-    requisitar<{ data: string; colaboradorId: number; duracao: number; horarios: string[] }>(
-      `/agenda/horarios-livres${qs(params)}`,
-    ),
-
+  horariosLivres: async (params: { colaboradorId: number; data: string; duracao?: number }) => ({
+    ...params,
+    duracao: params.duracao ?? 60,
+    horarios: await requisitar<string[]>(`/agenda/horarios-livres${qs(params)}`),
+  }),
   /** Vitrine da equipe para o tutor escolher quem atende (sem dados de contato). */
   profissionais: () =>
     requisitar<{ id: number; nome: string; cargo: string; disponibilidade: string }[]>('/profissionais'),
@@ -451,7 +489,7 @@ export const agendamentos = {
   cancelar: (id: number, motivo?: string) =>
     requisitar<any>(`/agendamentos/${id}/cancelar`, { metodo: 'PATCH', corpo: { motivo } }),
 
-  concluir: (id: number) => requisitar<any>(`/agendamentos/${id}/concluir`, { metodo: 'PATCH' }),
+  concluir: (id: number, observacao?: string) => requisitar<Agendamento>(`/agendamentos/${id}/concluir`, { metodo: 'PATCH', corpo: { observacao } }),
 }
 
 export const bloqueios = {
@@ -545,9 +583,12 @@ export const relatorios = {
   listar: (params: Record<string, unknown> = {}) => buscarTudo<any>('/relatorios', params),
 
   previa: (params: { tipo: string; de?: string; ate?: string }) =>
-    requisitar<{ colunas: any[]; linhas: any[]; totais: any; geradoEm: string; periodo: string }>(
+    requisitar<{ titulo: string; colunas: { campo: string; rotulo: string; dinheiro?: boolean }[]; linhas: Record<string, any>[]; totais?: any }>(
       `/relatorios/previa${qs(params)}`,
     ),
+
+  exportar: (params: { tipo: string; formato: string; de?: string; ate?: string }) =>
+    requisitar<Blob>(`/relatorios/exportar${qs(params)}`, { arquivo: true }),
 
   /** URL do arquivo exportado — o navegador baixa usando o mesmo cookie de sessão. */
   urlExportacao: (params: { tipo: string; formato: string; de?: string; ate?: string }) =>

@@ -1,155 +1,140 @@
-# 🐾 PetPlus — Banco de Dados
+# PetPlus — Banco de Dados
 
-Banco **PostgreSQL 17** normalizado (3FN), multi-tenant, construído a partir
-do Diagrama de Classes e dos Requisitos RF01–RF30 / RN01–RN12.
+Banco PostgreSQL utilizado pelo PetPlus para armazenar usuários, tutores, pets, profissionais, agenda, estoque, vendas, notificações e demais registros. O modelo acadêmico utiliza normalização, chaves estrangeiras, restrições, gatilhos e isolamento por petshop.
 
-## O que tem aqui
+Consulte o [README principal](../README.md) para a visão geral, o [backend](../backend/README.md) para configuração da API e o [frontend](../Prototipo_navegavel/README.md) para execução das telas.
 
-| Arquivo | Conteúdo |
+## Artefatos de modelagem
+
+| Artefato | Finalidade |
 |---|---|
-| [`MER.md`](MER.md) | Modelo Entidade-Relacionamento, decisões de modelagem e normalização |
-| [`diagramas/mer.mmd`](diagramas/mer.mmd) | Diagrama em sintaxe Mermaid (editável) |
-| [`diagramas/mer.png`](diagramas/mer.png) | Diagrama renderizado |
-| [`dicionario-de-dados.md`](dicionario-de-dados.md) | Todas as 26 tabelas, 232 colunas, constraints, gatilhos e índices — **gerado do banco real** |
-| [`sql/`](sql/) | DDL comentado, em ordem de aplicação |
+| [MER.md](MER.md) | Modelo Entidade-Relacionamento e decisões de normalização. |
+| [diagramas/mer.mmd](diagramas/mer.mmd) | Diagrama editável em Mermaid. |
+| [diagramas/mer.png](diagramas/mer.png) | Representação visual do modelo. |
+| [dicionario-de-dados.md](dicionario-de-dados.md) | Inventário gerado para a versão do esquema documentada. |
+| [sql/](sql/) | Migrações e seed de demonstração. |
 
-## Como subir (do zero)
+Diagrama e dicionário podem refletir uma entrega anterior. Antes da apresentação acadêmica, confira sua correspondência com as migrações posteriores; a contagem antiga de tabelas não certifica o banco atual.
 
-Pré-requisitos: **Docker** e **Node.js 20+**.
+## Conexão e papéis
 
-```bash
-# 1. Banco (PostgreSQL 17)
-docker run -d --name petplus-db \
-  -e POSTGRES_USER=petplus \
-  -e POSTGRES_PASSWORD=petplus \
-  -e POSTGRES_DB=petplus \
-  -p 5432:5432 \
-  postgres:17-alpine
+| Papel | Uso |
+|---|---|
+| Administrativo | Criação/atualização do esquema e carga de demonstração pelos scripts. |
+| Aplicação | Requisições da API com permissões limitadas e políticas RLS por petshop. |
 
-# 2. Schema + dados de demonstração
-cd backend
-npm install
-npm run reset     # derruba o schema, aplica as migrations e popula o seed
+As variáveis ficam no `.env` local de `backend/`; o arquivo não deve ser versionado. Os exemplos `petplus` e `petplus_app` pertencem ao ambiente de desenvolvimento e não devem ser reutilizados como credenciais de implantação.
+
+A porta da API é independente da porta do PostgreSQL. Um contêiner pode publicar `5433` no computador e continuar usando `5432` internamente.
+
+## Iniciar um banco existente
+
+```powershell
+docker ps -a
+# Se o contêiner do projeto estiver parado:
+docker start petplus-db
 ```
 
-Pronto. O banco sobe em `localhost:5432`, usuário e senha `petplus`.
+Confira a publicação de portas. Para `127.0.0.1:5433->5432/tcp`, use `DB_HOST=localhost` e `DB_PORT=5433` na API. No ambiente examinado, há outro PostgreSQL local na porta 5432; iniciar esse serviço não seleciona automaticamente o banco do projeto.
 
-| Papel | Usuário | Senha | Usa para |
-|---|---|---|---|
-| Dono do schema | `petplus` | `petplus` | migrations e seed |
-| Aplicação | `petplus_app` | `petplus_app` | a API (é o papel com RLS ativa) |
+## Preparar um banco novo de demonstração
 
-> **Por que dois usuários?** `petplus_app` **não é dono** das tabelas, e é
-> justamente por isso que as políticas de Row-Level Security se aplicam a
-> ele. O dono sempre ignoraria RLS — usar o mesmo usuário para tudo
-> desligaria o isolamento multi-tenant sem ninguém perceber.
+Procedimento destinado a um banco novo. Não recrie um contêiner existente para tentar corrigir uma conexão.
 
-### Comandos do dia a dia
+Exemplo em PowerShell com PostgreSQL 17, acesso local e porta externa 5433:
 
-```bash
-npm run migrate     # aplica só as migrations novas (registra em schema_migrations)
-npm run seed        # recarrega os dados de demonstração
-npm run reset       # recria tudo do zero
-npm run dicionario  # regera o dicionário de dados a partir do schema
-npm run test:db     # 32 verificações de integridade e regras de negócio
+```powershell
+docker run -d --name petplus-db -e POSTGRES_USER=petplus -e POSTGRES_PASSWORD=petplus -e POSTGRES_DB=petplus -p 127.0.0.1:5433:5432 postgres:17-alpine
 ```
 
-## Rodar a aplicação
+Esse exemplo não configura volume nomeado; preserve o contêiner e faça backup dos dados. Para persistência entre substituições do contêiner, planeje um volume antes de criar o ambiente definitivo.
 
-```bash
-# terminal 1 — API
-cd backend && npm start          # http://localhost:3333
+Após configurar o `.env` da API, com as credenciais administrativas correspondentes, execute a partir de `backend/`:
 
-# terminal 2 — interface
-cd Prototipo_navegavel && npm install && npm run dev   # http://localhost:5173
+```powershell
+npm ci
+npm run migrate
+# Apenas para carregar as contas e os registros de demonstração:
+npm run seed
 ```
 
-Acessos (senha `123` para todos):
+A instalação de dependências e a configuração do arquivo local estão descritas no [guia principal](../README.md#execução-em-ambiente-local). O seed modifica dados; não faz parte da inicialização diária.
 
-| Perfil | E-mail | Senha |
+## Atualizar um banco existente
+
+1. Faça backup antes da migração e confirme a possibilidade de restauração em ambiente separado.
+2. Confira host, porta, nome do banco e papel administrativo no `.env` local.
+3. Inspecione o histórico, por exemplo no contêiner local de demonstração:
+
+```powershell
+docker exec petplus-db psql -U petplus -d petplus -c "SELECT nome FROM schema_migrations ORDER BY nome;"
+```
+
+4. A partir de `backend/`, execute `npm run migrate`. O migrador aplica somente arquivos novos, reconhece o histórico legado descrito abaixo e não carrega o seed automaticamente.
+5. Reinicie a API, consulte `/api/health` e valide login, sessões e uma reserva conhecida.
+
+`npm run reset` recria o esquema; `npm run verificar` também inclui reset. Não os execute sobre dados compartilhados para apenas atualizar ou conferir o sistema.
+
+## Ajustes realizados
+
+### Migração 009 e histórico legado
+
+O ambiente examinado registrava `007_backend_operacional.sql` e `008_modulos_complementares.sql`. A versão atual do repositório possui `007_sessao_pontos_e_auditoria.sql`, com outro conteúdo.
+
+O [migrador](../backend/scripts/migrate.js) reconhece o par legado, preserva os nomes já registrados, não aplica a outra 007 por cima desse histórico e utiliza [009_compatibilidade_backend_atual.sql](sql/009_compatibilidade_backend_atual.sql) como ponte.
+
+| Situação anterior | Alteração da 009 | Resultado esperado |
 |---|---|---|
-| 👑 Gestor | `gestor@petplus.com` | `123` |
-| ✂️ Colaborador | `colab@petplus.com` | `123` |
-| 🐶 Cliente | `cliente@petplus.com` | `123` |
+| Estruturas/funções de sessão ausentes no legado. | Tabela de refresh, políticas/grants e funções de consulta exigidas pelo backend. | Login, renovação e revogação com o esquema esperado. |
+| Função de unidades ativas ausente. | Função utilizada pelo agendador. | Remoção da incompatibilidade de esquema observada naquele ambiente. |
+| Fila de notificação com campos antigos. | Campos e índices necessários ao processamento atual. | Compatibilidade sem reenviar todo o histórico apenas por migrar. |
+| Razão de fidelidade com outro formato. | Importação do histórico e preservação dos saldos; manutenção da tabela antiga. | Continuidade do extrato sem novo crédito dos pontos importados. |
+| Produtores antigos e backend atual concedendo créditos. | Desativação dos produtores antigos identificados pela migração. | Evitar duplicação de pontos. |
 
-## Estrutura do DDL
+A migração não altera arquivos SQL anteriores. Cada arquivo aplicado pelo migrador é executado em uma transação, com registro em `schema_migrations`.
 
-| Arquivo | O que faz |
+### Estrutura dos arquivos SQL
+
+| Arquivo | Conteúdo principal |
 |---|---|
-| `001_enums_e_funcoes.sql` | Extensões, 13 `ENUM`s do diagrama de classes e funções de fuso horário |
-| `002_tabelas.sql` | Tabelas de tenant, usuários (herança), pets, agenda e pacotes |
-| `003_tabelas_estoque_vendas.sql` | Estoque, PDV, auditoria e notificações |
-| `004_regras_de_negocio.sql` | Constraints e gatilhos que **impõem** as regras de negócio |
-| `005_views_e_seguranca.sql` | Views de alerta/indicador e Row-Level Security |
-| `006_funcoes_de_autorizacao.sql` | Escape hatches `SECURITY DEFINER` do login |
-| `010_seed.sql` | Dados de demonstração |
+| `001_enums_e_funcoes.sql` | Extensões, tipos e funções auxiliares. |
+| `002_tabelas.sql` | Cadastros, petshop, agenda e demais entidades iniciais. |
+| `003_tabelas_estoque_vendas.sql` | Estoque, vendas e estruturas relacionadas. |
+| `004_regras_de_negocio.sql` | Restrições e gatilhos das regras de negócio. |
+| `005_views_e_seguranca.sql` | Views e políticas de isolamento. |
+| `006_funcoes_de_autorizacao.sql` | Funções de autenticação/autorização anteriores à seleção do tenant. |
+| `007_sessao_pontos_e_auditoria.sql` | Estruturas de sessão, pontos e auditoria da sequência atual. |
+| `009_compatibilidade_backend_atual.sql` | Ponte de compatibilidade com o histórico legado examinado. |
+| `010_seed.sql` | Registros de demonstração, carregados pelo comando separado de seed. |
 
-Cada migration roda dentro da sua própria transação: ou entra inteira, ou
-não entra nada — e o que já rodou é registrado em `schema_migrations`.
+## Garantias e limites
 
-## O banco como guardião das regras
+O banco possui mecanismos para conflito de agenda, disponibilidade, estoque, pagamentos e isolamento por petshop. A API fornece o contexto transacional e verifica permissões. Isso não significa que todas as regras do sistema ou todos os cenários tenham sido certificados.
 
-O ponto central deste banco é que **as regras são impostas pelo banco**, e
-não apenas pela aplicação. Três exemplos:
+Datas de agenda são armazenadas como TIMESTAMPTZ e convertidas para o calendário local do petshop por funções SQL. O contexto de tenant é definido na transação e não deve permanecer indevidamente na conexão reutilizada pelo pool.
 
-```sql
--- RN01: dois atendimentos do mesmo profissional não podem se sobrepor.
--- Não é trigger — é constraint. Vale mesmo que a aplicação desative
--- todos os gatilhos e escreva direto via psql.
-EXCLUDE USING gist (
-  petshop_id     WITH =,
-  colaborador_id WITH =,
-  tstzrange(data_hora, data_hora_fim, '[)') WITH &&
-) WHERE (status <> 'cancelado')
+## Validação e inspeção
+
+Na revisão de 09/11/2026, uma cópia restaurada de backup foi utilizada antes da atualização local. A comparação das 32 tabelas anteriores preservou as linhas e os valores das colunas existentes. O teste de reaplicação da 009 também passou. Essa evidência se refere ao histórico examinado, não a todos os esquemas possíveis.
+
+Consultas de inspeção, sem atualização de dados:
+
+```powershell
+docker exec petplus-db psql -U petplus -d petplus -c '\dt'
+docker exec petplus-db psql -U petplus -d petplus -c '\d refresh_token'
+docker exec petplus-db psql -U petplus -d petplus -c "SELECT nome FROM schema_migrations ORDER BY nome;"
 ```
 
-```sql
--- RN11: só gestor, e só dentro do prazo comercial do próprio petshop.
--- O perfil vem do usuário autenticado da sessão.
-SELECT u.perfil INTO v_perfil FROM usuario u WHERE u.id = NEW.estornado_por;
-IF v_perfil IS DISTINCT FROM 'GESTOR' THEN
-  RAISE EXCEPTION 'Somente gestores podem estornar vendas (RN11)';
-END IF;
-```
+Para testes que gravam dados, utilize cópia exclusiva. Comandos, pré-condições e evidências estão na [validação do backend](../backend/README.md#validação) e no [registro geral](../README.md#validação-dos-ajustes). Não é necessário recriar o banco para inspecionar o esquema.
 
-```sql
--- RNF13: a aplicação declara o tenant no início da transação e, a partir
--- daí, o banco só devolve as linhas daquele petshop.
-CREATE POLICY tenant_isolamento_select ON pet
-  FOR SELECT USING (petshop_id = current_setting('app.petshop_id', true)::bigint);
-```
+## Dados de demonstração
 
-Ver como isso se comporta na prática está em [`../backend/README.md`](../backend/README.md).
+As contas abaixo existem somente quando o seed correspondente foi carregado e as senhas não foram alteradas. O login deve ser digitado manualmente.
 
-## Inspeção rápida
+| Perfil | E-mail de demonstração | Senha local |
+|---|---|---|
+| Gestor | `gestor@petplus.com` | `123` |
+| Colaborador | `colab@petplus.com` | `123` |
+| Cliente | `cliente@petplus.com` | `123` |
 
-```bash
-# Tabelas
-docker exec -it petplus-db psql -U petplus -d petplus -c "\dt"
-
-# Estrutura de uma tabela
-docker exec -it petplus-db psql -U petplus -d petplus -c "\d agendamento"
-
-# Alertas que a interface exibe (RF09 / RF23)
-docker exec -it petplus-db psql -U petplus -d petplus \
-  -c "SELECT nome, quantidade_estoque, estoque_minimo FROM vw_alerta_estoque_minimo;"
-
-# Histórico de estoque de um produto (RF08 / RNF09)
-docker exec -it petplus-db psql -U petplus -d petplus \
-  -c "SELECT tipo, quantidade, data_hora FROM movimentacao_estoque WHERE produto_id = 1 ORDER BY data_hora;"
-
-# Faturamento do dia, da semana e do mês (RF14)
-docker exec -it petplus-db psql -U petplus -d petplus \
-  -c "SELECT * FROM vw_faturamento ORDER BY dia DESC LIMIT 7;"
-```
-
-## Observação sobre o fuso horário
-
-`data_hora` é `TIMESTAMPTZ` (instante absoluto) — armazena o momento real,
-independente de onde o servidor roda. A conversão para a hora local do
-petshop acontece na leitura, via `petplus_data_hora_local(data_hora, ps.timezone)`.
-O mesmo vale para o caminho inverso, `petplus_para_ts('2026-09-12T09:00')`.
-
-Isso importa porque o frontend exibe `'2026-09-12T09:00'` sem fuso: se o
-servidor mudasse de `TimeZone`, a hora exibida Saltaria. Com a conversão
-explícita, ela não muda.
+A senha curta do seed é uma exceção histórica de demonstração. Novos cadastros de tutor e redefinições seguem a política implementada de senha com ao menos oito caracteres, letra e número. Não confunda dados de demonstração com credenciais apropriadas para publicação.

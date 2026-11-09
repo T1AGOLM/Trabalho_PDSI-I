@@ -24,6 +24,19 @@ function lerToken(req) {
   return req.cookies?.[config.http.cookie.name] ?? null
 }
 
+/** Logout aceita JWT vencido, mas exige assinatura, tenant e sid válidos. */
+export function lerSessaoDoAccessToken(req) {
+  try {
+    const payload = jwt.verify(lerToken(req), config.auth.jwtSecret, {
+      algorithms: ['HS256'], issuer: 'petplus-api', audience: 'petplus', ignoreExpiration: true,
+    })
+    if (![payload.sub, payload.petshopId, payload.sid].every(v => Number.isSafeInteger(v) && v > 0)) return null
+    return { usuarioId: payload.sub, tenantId: payload.petshopId, sessaoId: payload.sid }
+  } catch {
+    return null
+  }
+}
+
 /** Token de renovação: cookie próprio ou corpo da requisição. */
 export function lerRefreshToken(req) {
   return req.cookies?.[config.http.cookie.refreshName] ?? req.body?.refreshToken ?? null
@@ -44,12 +57,17 @@ export async function autenticar(req, res, next) {
     payload = jwt.verify(token, config.auth.jwtSecret, {
       algorithms: ['HS256'], // nenhum outro algoritmo é aceito (evita alg confusion)
       issuer: 'petplus-api',
+      audience: 'petplus',
     })
   } catch (err) {
     const mensagem = err.name === 'TokenExpiredError'
       ? 'Sessão expirada. Renove a sessão ou faça login novamente.'
       : 'Token inválido.'
     return res.status(401).json({ erro: mensagem, codigo: err.name === 'TokenExpiredError' ? 'TOKEN_EXPIRADO' : 'TOKEN_INVALIDO' })
+  }
+
+  if (![payload.sub, payload.petshopId, payload.sid].every(v => Number.isSafeInteger(v) && v > 0)) {
+    return res.status(401).json({ erro: 'Sessão inválida. Faça login novamente.', codigo: 'SESSAO_INVALIDA' })
   }
 
   try {
@@ -59,17 +77,20 @@ export async function autenticar(req, res, next) {
     // apontar para outra unidade.
     const { rows } = await withTransaction({ tenantId: payload.petshopId }, (db) =>
       db.query(
-        `SELECT id, petshop_id, perfil, nome, email::text AS email, ativo
-           FROM usuario
-          WHERE id = $1 AND petshop_id = $2`,
-        [payload.sub, payload.petshopId],
+        `SELECT u.id, u.petshop_id, u.perfil, u.nome, u.email::text AS email, u.ativo
+           FROM usuario u
+           JOIN refresh_token rt ON rt.usuario_id = u.id AND rt.petshop_id = u.petshop_id
+          WHERE u.id = $1 AND u.petshop_id = $2 AND rt.id = $3
+            AND rt.revogado_em IS NULL AND rt.expira_em > now()`,
+        [payload.sub, payload.petshopId, payload.sid],
       ),
     )
     const usuario = rows[0]
-    if (!usuario) return res.status(401).json({ erro: 'Usuário não encontrado.', codigo: 'USUARIO_AUSENTE' })
+    if (!usuario) return res.status(401).json({ erro: 'Sessão encerrada. Faça login novamente.', codigo: 'SESSAO_ENCERRADA' })
     if (!usuario.ativo) return res.status(403).json({ erro: 'Usuário inativo.', codigo: 'USUARIO_INATIVO' })
 
     req.usuario = usuario
+    req.sessaoId = payload.sid
     next()
   } catch (err) {
     next(err)
@@ -118,13 +139,15 @@ export const contexto = (req) => ({
 export const exigirGestor = exigirPerfil('GESTOR')
 
 /** Emite o token de acesso. */
-export function assinarToken(usuario) {
+export function assinarToken(usuario, sessaoId) {
+  if (!Number.isSafeInteger(sessaoId) || sessaoId <= 0) throw new Error('Identificador de sessão obrigatório para emitir JWT.')
   return jwt.sign(
     {
       sub: usuario.id,
       petshopId: usuario.petshop_id,
       perfil: usuario.perfil,
       nome: usuario.nome,
+      sid: sessaoId,
     },
     config.auth.jwtSecret,
     {
@@ -138,7 +161,7 @@ export function assinarToken(usuario) {
 
 /**
  * Opções do cookie de sessão: inacessível ao JavaScript (`httpOnly`, o que
- * neutraliza roubo por XSS), restrito a requisições do próprio site
+ * reduz a exposição direta do cookie a XSS), restrito por SameSite
  * (`sameSite: lax`) e marcado `secure` em produção.
  */
 export const opcoesDoCookie = (segundos) => ({

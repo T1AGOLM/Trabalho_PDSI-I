@@ -38,7 +38,18 @@ async function main() {
   const { rows } = await client.query('SELECT nome FROM schema_migrations')
   const aplicados = new Set(rows.map((r) => r.nome))
 
+  // Histórico legado real: a 007 atual recriaria tabelas já existentes.
+  // A 009 faz a ponte aditiva e preserva ambos os nomes no histórico.
+  const legado = aplicados.has('007_backend_operacional.sql') && aplicados.has('008_modulos_complementares.sql')
+  if (legado && !arquivos.includes('009_compatibilidade_backend_atual.sql')) {
+    throw new Error('Histórico legado detectado, mas a migração 009 de compatibilidade não está presente.')
+  }
+
   for (const arquivo of arquivos) {
+    if (legado && arquivo === '007_sessao_pontos_e_auditoria.sql') {
+      console.log(`  · ${arquivo} (histórico legado: compatibilizado pela 009)`)
+      continue
+    }
     if (aplicados.has(arquivo)) {
       console.log(`  = ${arquivo} (já aplicado)`)
       continue

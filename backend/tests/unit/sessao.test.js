@@ -35,7 +35,7 @@ test('hash do refresh token é SHA-256 estável e não revela o valor', () => {
 })
 
 test('JWT carrega tenant e perfil, assinado com o algoritmo esperado', () => {
-  const token = assinarToken({ id: 7, petshop_id: 1, perfil: 'GESTOR', nome: 'Marcos' })
+  const token = assinarToken({ id: 7, petshop_id: 1, perfil: 'GESTOR', nome: 'Marcos' }, 42)
   const cabecalho = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString())
   assert.equal(cabecalho.alg, 'HS256')
 
@@ -45,11 +45,12 @@ test('JWT carrega tenant e perfil, assinado com o algoritmo esperado', () => {
   assert.equal(payload.sub, 7)
   assert.equal(payload.petshopId, 1)
   assert.equal(payload.perfil, 'GESTOR')
+  assert.equal(payload.sid, 42)
   assert.ok(payload.exp > payload.iat, 'deve ter expiração futura')
 })
 
 test('a assinatura do token é rejeitada com outro segredo ou outro algoritmo', () => {
-  const token = assinarToken({ id: 1, petshop_id: 1, perfil: 'CLIENTE', nome: 'X' })
+  const token = assinarToken({ id: 1, petshop_id: 1, perfil: 'CLIENTE', nome: 'X' }, 42)
   assert.throws(
     () => jwt.verify(token, 'outro-segredo-qualquer', { algorithms: ['HS256'], issuer: 'petplus-api' }),
     /invalid signature/,

@@ -7,13 +7,15 @@ import { config } from '../config/env.js'
 /**
  * Sessões (RNF04 / RNF06).
  *
- * O access token é um JWT curto e stateless. O refresh token é um segredo
+ * O access token é um JWT curto ligado ao registro de sessão por sid.
+ * O middleware rejeita sessões revogadas em cada requisição.
+ * O refresh token é um segredo
  * aleatório de 256 bits que **só existe no banco como SHA-256** e é
  * rotacionado a cada renovação:
  *
  *   login        → (access₁, refresh₁)
  *   refresh₁     → (access₂, refresh₂), refresh₁ marcado como revogado
- *   refresh₁ ✗   → reapresentação! A família inteira é revogada.
+ *   refresh₁ ✗   → reapresentação! Todas as sessões do usuário são revogadas.
  *
  * É esse último passo que transforma um vazamento de token em um evento
  * detectável e contido, em vez de uma sessão eterna para o atacante.
@@ -45,13 +47,14 @@ export const segundosDoAccessToken = () => Math.floor(duracaoEmMs(config.auth.jw
 
 /**
  * Cria uma sessão nova (login/cadastro) e devolve o par de tokens.
- * A gravação do refresh acontece dentro da transação do tenant.
+ * Aceita a conexão do cadastro para incluir a sessão na mesma transação;
+ * sem conexão, abre uma transação própria no tenant.
  */
-export async function criarSessao({ usuario, ip, userAgent }) {
+export async function criarSessao({ usuario, ip, userAgent }, conexao) {
   const refreshToken = novoToken()
   const expiraEm = new Date(Date.now() + duracaoEmMs(config.auth.jwtRefreshExpiresIn))
 
-  const criado = await withTransaction({ tenantId: usuario.petshop_id, usuarioId: usuario.id }, async (db) => {
+  const gravar = async (db) => {
     const { rows } = await db.query(
       `INSERT INTO refresh_token (petshop_id, usuario_id, token_hash, expira_em, user_agent, ip)
        VALUES ($1, $2, $3, $4, $5, $6)
@@ -59,10 +62,12 @@ export async function criarSessao({ usuario, ip, userAgent }) {
       [usuario.petshop_id, usuario.id, hashDoToken(refreshToken), expiraEm, userAgent ?? null, ip ?? null],
     )
     return rows[0]
-  })
+  }
+  const criado = conexao ? await gravar(conexao)
+    : await withTransaction({ tenantId: usuario.petshop_id, usuarioId: usuario.id }, gravar)
 
   return {
-    token: assinarToken(usuario),
+    token: assinarToken(usuario, criado.id),
     refreshToken,
     refreshTokenId: criado.id,
     expiraEmSegundos: segundosDoAccessToken(),
@@ -76,9 +81,9 @@ const revogar = (db, id) =>
   db.query('UPDATE refresh_token SET revogado_em = now() WHERE id = $1 AND revogado_em IS NULL', [id])
 
 /** Revoga todas as sessões de um usuário — usada em troca de senha e em reuso detectado. */
-export function revogarSessoesDoUsuario({ tenantId, usuarioId }) {
-  return withTransaction({ tenantId, usuarioId }, (db) =>
-    db.query('UPDATE refresh_token SET revogado_em = now() WHERE usuario_id = $1 AND revogado_em IS NULL', [usuarioId]))
+export function revogarSessoesDoUsuario({ tenantId, usuarioId }, db) {
+  const executar = conn => conn.query('UPDATE refresh_token SET revogado_em = now() WHERE usuario_id = $1 AND revogado_em IS NULL', [usuarioId])
+  return db ? executar(db) : withTransaction({ tenantId, usuarioId }, executar)
 }
 
 /**
@@ -111,54 +116,83 @@ export async function renovarSessao({ refreshToken, ip, userAgent }) {
     throw new ErroDeNegocio('Sessão expirada. Faça login novamente.', { status: 401, codigo: 'REFRESH_EXPIRADO' })
   }
 
-  // A conta pode ter sido desativada entre a emissão e a renovação.
-  const usuario = await withTransaction({ tenantId: registro.petshop_id }, async (db) => {
-    const { rows } = await db.query(
-      'SELECT id, petshop_id, perfil, nome, email::text AS email, ativo FROM usuario WHERE id = $1',
-      [registro.usuario_id],
-    )
-    return rows[0]
-  })
-  if (!usuario || !usuario.ativo) {
-    throw new ErroDeNegocio('Conta inativa ou removida.', { status: 403, codigo: 'CONTA_INATIVA' })
-  }
-
   const novoRefresh = novoToken()
   const expiraEm = new Date(Date.now() + duracaoEmMs(config.auth.jwtRefreshExpiresIn))
 
-  await withTransaction({ tenantId: registro.petshop_id, usuarioId: registro.usuario_id }, async (db) => {
+  const resultado = await withTransaction({ tenantId: registro.petshop_id, usuarioId: registro.usuario_id }, async (db) => {
+    // A mesma ordem de bloqueio (usuário antes das sessões) permite que
+    // troca de senha e renovação concorrentes sejam serializadas.
     const { rows } = await db.query(
+      'SELECT id, petshop_id, perfil, nome, email::text AS email, ativo FROM usuario WHERE id = $1 FOR UPDATE',
+      [registro.usuario_id],
+    )
+    const usuario = rows[0]
+    if (!usuario || !usuario.ativo) {
+      throw new ErroDeNegocio('Conta inativa ou removida.', { status: 403, codigo: 'CONTA_INATIVA' })
+    }
+
+    const consumido = await db.query(
+      `UPDATE refresh_token SET revogado_em = now()
+        WHERE id = $1 AND revogado_em IS NULL AND expira_em > now()
+        RETURNING id`,
+      [registro.id],
+    )
+    if (consumido.rowCount !== 1) {
+      // Retorna em vez de lançar aqui: a revogação de todas as sessões
+      // precisa ser confirmada, não desfeita pelo ROLLBACK do helper.
+      await db.query('UPDATE refresh_token SET revogado_em = now() WHERE usuario_id = $1 AND revogado_em IS NULL', [registro.usuario_id])
+      return null
+    }
+
+    const criado = await db.query(
       `INSERT INTO refresh_token (petshop_id, usuario_id, token_hash, expira_em, user_agent, ip)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id`,
       [registro.petshop_id, registro.usuario_id, hashDoToken(novoRefresh), expiraEm, userAgent ?? null, ip ?? null],
     )
-    // A rotação é atômica: o token antigo só é revogado junto com o novo.
+    // Consumo e criação são confirmados juntos, ou ambos são revertidos.
     await db.query(
-      'UPDATE refresh_token SET revogado_em = now(), substituido_por = $2 WHERE id = $1',
-      [registro.id, rows[0].id],
+      'UPDATE refresh_token SET substituido_por = $2 WHERE id = $1',
+      [registro.id, criado.rows[0].id],
     )
+    return { usuario, id: criado.rows[0].id }
   })
 
+  if (!resultado) {
+    throw new ErroDeNegocio('Sessão encerrada por segurança. Entre novamente.', { status: 401, codigo: 'REFRESH_REUTILIZADO' })
+  }
+
   return {
-    token: assinarToken(usuario),
+    token: assinarToken(resultado.usuario, resultado.id),
     refreshToken: novoRefresh,
     expiraEmSegundos: segundosDoAccessToken(),
     refreshExpiraEm: expiraEm.toISOString(),
-    usuario,
+    usuario: resultado.usuario,
   }
 }
 
 /**
- * Encerra a sessão do token informado. Sem token válido, não faz nada —
- * logout nunca deve devolver erro para o cliente.
+ * Encerra a sessão pelo refresh e/ou pelo access token verificado.
+ * A rota limpa os cookies em finally, inclusive se o banco falhar.
  */
-export async function encerrarSessao({ refreshToken }) {
-  if (!refreshToken) return { encerrada: false }
-  const registro = await queryOne('SELECT * FROM petplus_buscar_refresh_token($1)', [hashDoToken(refreshToken)])
-  if (!registro) return { encerrada: false }
-  await withTransaction({ tenantId: registro.petshop_id, usuarioId: registro.usuario_id }, (db) => revogar(db, registro.id))
-  return { encerrada: true }
+export async function encerrarSessao({ refreshToken, sessaoAccess }) {
+  let encerrada = false
+  if (refreshToken) {
+    const registro = await queryOne('SELECT * FROM petplus_buscar_refresh_token($1)', [hashDoToken(refreshToken)])
+    if (registro) {
+      await withTransaction({ tenantId: registro.petshop_id, usuarioId: registro.usuario_id }, db => revogar(db, registro.id))
+      encerrada = true
+    }
+  }
+  if (sessaoAccess) {
+    const { tenantId, usuarioId, sessaoId } = sessaoAccess
+    await withTransaction({ tenantId, usuarioId }, db => db.query(
+      'UPDATE refresh_token SET revogado_em = now() WHERE id = $1 AND usuario_id = $2 AND revogado_em IS NULL',
+      [sessaoId, usuarioId],
+    ))
+    encerrada = true
+  }
+  return { encerrada }
 }
 
 /**

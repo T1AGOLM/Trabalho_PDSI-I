@@ -132,6 +132,7 @@ gestaoRoutes.delete('/avaliacoes/:id', autenticar, soGestor, validar({ params: i
 gestaoRoutes.get('/dashboard', autenticar, soGestor,
   validar({ query: z.object({ de: dataOpcional(), ate: dataOpcional() }) }),
   rota(async (req, res) => {
+    validarPeriodo(req.consulta)
     res.json(await resumoDashboard(contexto(req), req.consulta))
   }))
 

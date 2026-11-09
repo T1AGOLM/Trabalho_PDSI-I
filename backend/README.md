@@ -1,235 +1,204 @@
-# 🐾 PetPlus — Backend
+# PetPlus — Backend
 
-API mínima sobre o banco normalizado do PetPlus. Existe para **servir o
-banco** e deixar provado que o frontend conversa com ele — não para ser o
-backend final.
+API em Node.js e Express responsável por autenticação, cadastros, agenda, estoque, vendas e recursos de gestão. Utiliza PostgreSQL, consultas parametrizadas e organização em rotas, serviços e repositórios.
+
+Para o resumo do projeto e as evidências consolidadas, consulte o [README principal](../README.md). O preparo e a atualização do PostgreSQL estão no [guia do banco](../Banco_de_Dados/README.md).
+
+## Execução e configuração
+
+Comandos a partir de `backend/`:
+
+```powershell
+npm ci
+if (-not (Test-Path -LiteralPath .env)) {
+    Copy-Item .env.example .env
+}
+```
+
+Ajuste o `.env` antes de iniciar. Não sobrescreva um arquivo local já configurado. Após preparar o banco:
+
+```powershell
+npm start
+```
+
+API: [http://localhost:3333/api](http://localhost:3333/api). Documentação das rotas: [http://localhost:3333/api/docs](http://localhost:3333/api/docs).
+
+```powershell
+Invoke-RestMethod 'http://localhost:3333/api/health'
+```
+
+O backend declara Node.js 20+; para executar também os testes que usam o Puppeteer do lockfile, utilize Node.js 22.12 ou superior.
+
+| Variável | Finalidade |
+|---|---|
+| `NODE_ENV` / `PORT` | Ambiente e porta da API. |
+| `DB_HOST`, `DB_PORT`, `DB_NAME` | Banco acessado pelo processo. A porta deve coincidir com a publicação do Docker; no ambiente examinado foi 5433. |
+| `DB_USER`, `DB_PASSWORD` | Credenciais do papel da aplicação, com políticas de isolamento. |
+| `DB_ADMIN_USER`, `DB_ADMIN_PASSWORD` | Credenciais administrativas utilizadas pelos scripts de banco. |
+| `JWT_SECRET` | Segredo de assinatura. Substitua os valores de demonstração fora do ambiente local. |
+| `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | Validade dos tokens. O código usa padrões de 30 minutos e 7 dias; o `.env.example` define 8 horas para o primeiro. O valor configurado prevalece. |
+| `CORS_ORIGIN` | Lista de origens permitidas; frontend local em `http://localhost:5173`. |
+| `APP_URL` | URL pública do frontend usada na construção do link de recuperação, independente do CORS. |
+| `EXPOR_TOKEN_RECUPERACAO` | `false` por padrão. Demonstração explícita fora de produção; produção ignora a flag. |
+| `EMAIL_TRANSPORT` | `console` ou `arquivo`, ambos transportes locais sem entrega de e-mail. |
+| `LEMBRETES_ENABLED` | Habilita o agendador; pode ser desativado no ambiente isolado de testes. |
+
+A configuração completa e suas validações estão em [src/config/env.js](src/config/env.js). O `.env` real não deve ser versionado.
 
 ## Arquitetura em camadas
 
-```
-src/
-├── config/env.js           configuração central (tudo por variável de ambiente)
-├── db/pool.js              pool de conexões + helper de transação com tenant
-├── middleware/
-│   ├── auth.js             JWT, perfis e injeção do tenant na sessão
-│   └── errors.js           traduz códigos do PostgreSQL em respostas HTTP
-├── repositories/           SQL puro, uma função por operação
-├── services/               regras que combinam mais de um repositório
-└── routes/index.js         HTTP: valida entrada, chama serviço, devolve
-```
-
-A separação importa porque é ela que permite **substituir qualquer camada
-sem quebrar as outras**. Hoje a regra de conflito de agenda mora no banco;
-quando o backend robusto precisar de uma mensagem de erro mais rica ou de
-uma regra que dependa de dado externo, ela entra em `services/` — sem
-mover uma linha de SQL.
-
-### Onde cada coisa mora
-
-| Camada | Responsabilidade | Prova |
-|---|---|---|
-| **Banco** | Integridade, regras estruturais (RN01, RN02, RN08, RN11, RN12), isolamento por tenant | `npm run test:db` |
-| **Repository** | SQL parametrizado, transação com `app.petshop_id` | `npm run smoke` |
-| **Service** | Regras que cruzam repositórios (hash de senha, fluxo de venda) | `npm run smoke` |
-| **Route** | Validação de entrada, perfil exigido, status HTTP | `npm run e2e` |
-| **Frontend** | Renderização; as regras vêm do banco | `npm run e2e` |
-
-Duplicar regra de negócio entre aplicação e banco seria criar duas fontes
-de verdade. A escolha aqui foi: **o banco é o arbrite**, e a aplicação
-traduz a mensagem dele.
-
-## O banco é o guardião — três exemplos observados
-
-```bash
-npm run smoke
-```
-
-```
-RN01 — Conflito de agenda: este profissional já possui um atendimento que
-       se sobrepõe a este horário.              → 409 CONFLITO_AGENDA
-
-Fora da disponibilidade cadastrada (RN08): colaborador 8 não atende em …
-                                          → 422 (gatilho do banco)
-
-Operação bloqueada por uma regra do banco.  → 422 (constraint do banco)
-
-Somente gestores podem estornar vendas (RN11)  → 403 (gatilho do banco)
-```
-
-A checagem de conflito no front (`Agenda.tsx`) existe só para dar retorno
-instantâneo. A decisão é sempre do banco: o front sempre chama a API.
-
-## Multi-tenant (RNF13)
-
-A cada transação a aplicação declara o tenant:
-
-```js
-await withTransaction({ tenantId, usuarioId }, async (client) => {
-  await client.query("SELECT set_config('app.petshop_id', $1, true)", [String(tenantId)])
-  // ... todas as consultas daqui herdam o filtro das políticas RLS
-})
-```
-
-`SET LOCAL` faz o valor sumir no fim da transação, então uma conexão
-devolvida ao pool nunca "vaza" o tenant anterior.
-
-**A exceção**, e ela é explícita: o login precisa encontrar a conta pelo
-e-mail **antes** de existir um tenant. Isso é feito por
-`petplus_buscar_usuario_por_email()`, uma função `SECURITY DEFINER` que
-devolve só `id`, `petshop_id`, `perfil` e o hash — nada mais, e não concede
-escrita alguma. As duas únicas funções desse tipo no banco são as de login
-e de "petshop padrão" (`006_funcoes_de_autorizacao.sql`).
-
-O teste prova que a exceção não vaza nada: `npm run test:db` cria um segundo
-tenant e confirma que o primeiro não enxerga nenhum registro dele.
-
-## Autenticação (RF18 / RNF02 / RNF04 / RNF24)
-
-- Senha guardada como **hash bcrypt** (10 rounds); nunca em texto puro, nunca
-  devolvida pela API.
-- **JWT** com `sub`, `petshopId`, `perfil` e `nome`.
-- A cada requisição o middleware **reconsulta** o usuário: conta desativada
-  ou removida não continua operando com um token ainda válido.
-- E-mail inexistente e senha errada devolvem a **mesma** mensagem, para não
-  permitir enumerar contas.
-- Recuperação de senha guarda apenas o **SHA-256** do token, com validade
-  de 1 h e uso único. O token em claro volta na resposta só para permitir
-  demonstrar o fluxo sem um provedor de e-mail.
-
-## Contrato da API
-
-Base: `http://localhost:3333/api`
-
-| Método | Rota | Perfil | Descrição |
-|---|---|---|---|
-| `GET` | `/health` | público | Estado da API e do banco |
-| `POST` | `/auth/login` | público | Devolve `{ token, usuario }` |
-| `POST` | `/auth/cadastro` | público | Cadastro de tutor + consentimento LGPD |
-| `POST` | `/auth/recuperar-senha` | público | Gera o token de redefinição |
-| `POST` | `/auth/redefinir-senha` | público | Consome o token e troca a senha |
-| `GET` | `/auth/eu` | qualquer | Sessão atual |
-| `GET` | `/bootstrap` | qualquer | Snapshot do tenant (§ abaixo) |
-| `GET` | `/agendamentos` | qualquer | Lista do tenant |
-| `POST` | `/agendamentos` | qualquer | Cria — banco valida RN01/RN08 |
-| `PATCH` | `/agendamentos/:id/remarcar` | qualquer | Move — revalida conflito |
-| `PATCH` | `/agendamentos/:id/cancelar` | qualquer | Cancela e libera o horário (RN04) |
-| `PATCH` | `/agendamentos/:id/concluir` | qualquer | Conclui o atendimento |
-| `GET` | `/vendas` | qualquer | Histórico com itens e pagamentos |
-| `POST` | `/vendas` | qualquer | Registra venda — baixa estoque (RF08) |
-| `POST` | `/vendas/:id/estornar` | **GESTOR** | Estorna e devolve estoque (RN11) |
-| `GET` | `/produtos` | qualquer | Catálogo com saldo |
-| `GET` | `/produtos/alertas` | qualquer | Alertas de mínimo e validade |
-| `POST` | `/produtos` | **GESTOR** | Cadastra com entrada inicial |
-| `PATCH` | `/produtos/:id` | **GESTOR** | Edita metadados |
-| `POST` | `/produtos/:id/entrada` | **GESTOR** | Entrada de mercadoria |
-| `DELETE` | `/produtos/:id` | **GESTOR** | Inativa (RF03) |
-| `GET` | `/clientes/:id/pets` | qualquer | Pets de um tutor |
-| `POST` | `/clientes` | **GESTOR** | Cadastra tutor e primeiro pet |
-
-### `GET /bootstrap`
-
-Uma chamada devolve todo o tenant no **formato exato** do antigo `db` em
-memória do protótipo (`src/data.ts`): mesmas chaves, mesmos tipos,
-`dataHora` em `'YYYY-MM-DDTHH:MM'`. É o que permitiu ligar o banco às 26
-telas sem reescrever nenhuma delas.
-
-**Substitua esta rota por endpoints por recurso** quando construir o
-backend robusto. As camadas acima dela não mudam: é só um novo
-`repositories/` consumindo as mesmas telas, agora com cache e paginação.
-
-## Como isso se liga ao frontend
-
-```
-src/api.ts          único ponto de contato com a rede (fetch + token + erros)
-src/data.ts         busca o bootstrap e preenche `db` — MESMO objeto de antes
-src/App.tsx         espera a carga antes de renderizar as telas internas
-```
-
-`db` mantém a identidade do objeto durante toda a sessão: nunca é
-substituído, é preenchido. Por isso as telas que fazem
-`useState([...db.agendamentos])` continuam funcionando sem alteração.
-
-As três telas com **escrita real** no banco — `Agenda.tsx` (criar, remarcar,
-cancelar), `PDV.tsx` (registrar venda) e `Estoque.tsx` (criar, editar,
-entrada, excluir) — chamam a API e depois `sincronizar()`, que relê o
-snapshot. Por isso uma venda registrada no PDV aparece imediatamente na
-tela de Estoque com o saldo novo: o dado deixou de viver na memória da tela.
-
-As demais telas seguem lendo `db` em modo leitura, como no protótipo.
-
-## Verificação
-
-```bash
-npm run test:db    # 32 checagens no BANCO: normalização, FKs, RN, RLS
-npm run smoke      # 30 checagens na API por HTTP: auth, regras, perfis
-npm run e2e        # 31 checagens no Chrome: login, agenda, PDV, estoque
-npm run verificar  # recria o banco e roda os três em sequência
-```
-
-| Suíte | O que prova que nenhuma outra prova |
+| Camada | Responsabilidade |
 |---|---|
-| `test:db` | As regras sobrevivem à aplicação: recusa direto no PostgreSQL |
-| `smoke` | As rotas, o JWT e a tradução de erros estão ligados ponta a ponta |
-| `e2e` | O app **consegue** usar a API — CORS, token, ordem de carga |
+| `routes/` | Rotas HTTP, validação de entrada e seleção de perfis autorizados. |
+| `services/` | Fluxos de autenticação, sessões, recuperação e operações que combinam etapas. |
+| `repositories/` | Consultas parametrizadas e operações transacionais por domínio. |
+| `db/` | Pool e contexto transacional do petshop. |
+| `middleware/` | Autenticação, segurança HTTP e tradução de erros. |
+| `observability/` | Logs estruturados e métricas. |
+| `jobs/` | Agendamento e processamento periódico de notificações. |
 
-`e2e` é a que pega o que as outras duas não veem: um `Origin` não
-liberado, um token não lido ou um `db` carregando tarde demais só apareceriam
-navegando de verdade. Ele digita a senha, cria um agendamento, vende no PDV
-e dá entrada de estoque — e depois **confere os saldos pela API**, para não
-confiar no que a tela diz.
+O banco participa das garantias de integridade, disponibilidade, conflito de agenda e estoque. As permissões também são verificadas pela API. Políticas RLS utilizam o contexto `app.petshop_id` na transação; elas não dispensam testes de autorização nem configuração correta dos papéis.
 
-## Caminho para o backend robusto
+Datas de agenda são convertidas entre o instante armazenado em PostgreSQL e a data/hora local do petshop. Valores financeiros são armazenados em NUMERIC; a aplicação converte os valores na fronteira de acesso ao banco.
 
-O que já está pronto e o que falta, em ordem de prioridade:
+## Ajustes realizados
 
-| # | Item | Estado |
+| Tema | Problema anterior | Ajuste e efeito |
 |---|---|---|
-| 1 | **Envio de e-mail** (RF12/RF13) | Tabela e gatilho prontos; falta provedor + agendador |
-| 2 | **Exportação PDF/CSV** (RF27) | Tabela `relatorio` pronta; falta gerar o arquivo |
-| 3 | **Paginação e filtros** | Hoje `bootstrap` traz tudo; suplemente endpoints por recurso |
-| 4 | **Rate limiting e refresh de token** | Ausente |
-| 5 | **Testes unitários da camada de serviço** | Hoje a cobertura é de integração |
-| 6 | **Observabilidade** (RNF17) | Só `console.error`; falta log estruturado e métricas |
-| 7 | **Gestão de migrations versionada** | O runner já registra estado; falta uma ferramenta de rollback |
-| 8 | **Cache e filas** | Vendas e notificações são candidatas naturais a fila |
+| Sessão ativa | JWT válido não era vinculado à revogação do registro da sessão. | JWT inclui `sid`; o middleware confere sessão ativa e usuário em cada requisição autenticada. |
+| Logout | Encerramento e limpeza de cookies tinham caminhos incompletos. | Identificação por refresh e/ou access token assinado; limpeza dos cookies em finally. |
+| Concorrência de tokens | Leituras e atualizações permitiam disputa no consumo. | Consumo condicional; rotação e criação do substituto na mesma transação. Reuso revoga as sessões do usuário. |
+| Senha | Alteração e revogação não estavam garantidas na mesma transação. | Troca/redefinição revoga todas as sessões atomicamente; novo login é necessário. |
+| Recuperação | Link podia circular em notificações e transportes locais. | Notificação sem credencial, redação nos logs e demonstração somente por flag. |
+| Consentimento | Conversão de valores aceitava entradas diferentes do booleano esperado. | Cadastro exige `true` literal e retorna código `LGPD_CONSENTIMENTO` quando inválido. |
+| Erros HTTP | Mensagem podia ser omitida na serialização da resposta. | Contrato de mensagem consistente, detalhes de campos e resposta genérica para falhas internas não tratadas. |
+| Migrações | Banco legado tinha histórico diferente da 007 atual. | Migrador reconhece o par legado 007/008 e usa a ponte 009 sem reaplicar a outra 007. |
 
-Nenhuma dessas tarefas exige mexer no banco: elas são todas da camada de
-aplicação. A separação em camadas é o que garante isso.
+JWTs antigos sem `sid` precisam de renovação ou novo login. Limpar dados locais sem rede não garante revogação no servidor; a interface e os testes distinguem esses efeitos.
 
-## Configuração
+## Recuperação de senha
 
-Copie `backend/.env.example` para `backend/.env` e ajuste. Tudo que muda
-entre ambientes passa por variável de ambiente.
+O banco guarda SHA-256 do token, com validade de 60 minutos e uso único. A redefinição consome o token e grava a senha na mesma transação da revogação das sessões.
 
-| Variável | Padrão | Observação |
+Os transportes `console` e `arquivo` não entregam um e-mail utilizável ao usuário. A implantação de um provedor de entrega continua pendente. Para demonstração local, antes de iniciar a API:
+
+```powershell
+$env:EXPOR_TOKEN_RECUPERACAO = 'true'
+npm start
+```
+
+O botão de continuação da interface só aparece quando a API devolve um token. A resposta padrão não o inclui e a flag não tem efeito em produção. Para encerrar a demonstração, pare o processo, remova a variável do terminal e confirme que o `.env` mantém `false`:
+
+```powershell
+Remove-Item Env:EXPOR_TOKEN_RECUPERACAO -ErrorAction SilentlyContinue
+```
+
+## Contrato e integração com a interface
+
+A base local é `/api`. A lista completa de rotas e schemas está em `/api/docs`; exemplos relevantes:
+
+| Método | Caminho sem `/api` | Finalidade |
 |---|---|---|
-| `PORT` | `3333` | Porta da API |
-| `DB_HOST` / `DB_PORT` / `DB_NAME` | `localhost` / `5432` / `petplus` | |
-| `DB_USER` / `DB_PASSWORD` | `petplus_app` / `petplus_app` | Papel com RLS ativa |
-| `DB_ADMIN_USER` / `DB_ADMIN_PASSWORD` | `petplus` / `petplus` | Só migrations e seed |
-| `JWT_SECRET` | — | **Troque em produção.** `JWT_EXPIRES_IN` padrão: 8 h |
-| `CORS_ORIGIN` | `http://localhost:5173` | Origen do frontend |
-| `BCRYPT_ROUNDS` | `10` | |
+| GET | `/health` | Estado do processo e conexão com o banco. |
+| POST | `/auth/login`, `/auth/refresh`, `/auth/logout` | Início, renovação e encerramento de sessão. |
+| POST | `/auth/cadastro` | Cadastro público de tutor com consentimento. |
+| POST | `/auth/recuperar-senha`, `/auth/redefinir-senha` | Solicitação e consumo do token de recuperação. |
+| GET | `/auth/eu` | Identificação da sessão autenticada. |
+| GET/POST | `/agendamentos` | Consulta com filtros e criação de reserva. |
+| PATCH | `/agendamentos/:id/remarcar` | Remarcação da reserva com nova validação de disponibilidade. |
+| PATCH | `/agendamentos/:id/cancelar` | Cancelamento da reserva. |
+| PATCH | `/agendamentos/:id/concluir` | Conclusão; exige perfil da equipe. |
+| GET | `/agenda/horarios-livres` | Array de horários livres para profissional, data e duração. |
 
-## Notas de implementação
+As coleções paginadas usam o envelope `{ dados, pagina, limite, total, paginas }`, com limite máximo de 100 por página. Nem todo endpoint é uma coleção paginada: horários livres, por exemplo, retornam array.
 
-**Erros do banco viram mensagens legíveis.** `middleware/errors.js` traduz
-o código SQLSTATE para HTTP e para português: `23P01` → 409 com a mensagem
-de conflito de agenda; `42501` → 403; `23514` → 422. A aplicação nunca
-precisa conhecer esses códigos.
+O frontend carrega recursos conforme o perfil. A descrição antiga de uma carga única por `/bootstrap` não representa o fluxo atual. O [README da interface](../Prototipo_navegavel/README.md) descreve a organização do cliente HTTP e do cache.
 
-**Dinheiro é `NUMERIC`, nunca `float`.** O pool converte na fronteira com
-segurança (`NUMERIC` → `Number`), porque no domínio do PetPlus tudo tem
-duas casas. Se um dia precisar de precisão arbitrária, troque por `decimal.js`
-no mesmo lugar — só um arquivo muda.
+## Migrações
 
-**Fuso horário é explícito.** `petplus_para_ts()` e
-`petplus_data_hora_local()` recebem o fuso do petshop como parâmetro, em vez
-de depender do `TimeZone` da sessão — assim o dado não muda se o servidor
-mudar de configuração.
+O migrador utiliza `schema_migrations`, aplica arquivos novos em ordem e envolve cada arquivo em transação. O seed é um comando separado. Para atualizar uma base existente, faça backup e siga o [procedimento do banco](../Banco_de_Dados/README.md#atualizar-um-banco-existente).
 
-**Débito de estoque é transacional.** `venda.repository.registrar()` trava as
-linhas dos produtos com `SELECT … FOR UPDATE` **antes** de ler o saldo, o
-que impede duas vendas simultâneas de venderem o mesmo estoque
-(*write skew*). A venda, os itens, os pagamentos e a baixa de estoque saem
-todos na mesma transação.
+A migração 009 também preserva a razão antiga de fidelidade e desativa seus produtores de crédito para evitar duplicidade com o backend. Não aplique a outra 007 manualmente por cima do histórico legado.
+
+## Validação
+
+### Testes sem banco real
+
+A partir de `backend/`:
+
+```powershell
+node --test --test-concurrency=1 tests/unit/
+```
+
+`npm test` executa a mesma pasta sem limitar a concorrência. A opção sequencial foi usada na revisão para reduzir o consumo simultâneo de recursos.
+
+### Integração de segurança com PostgreSQL
+
+Prepare um banco exclusivo com schema e dados de demonstração. A suíte cria contas de teste e os registros permanecem para inspeção. Após configurar a conexão do terminal para essa cópia:
+
+```powershell
+$env:DB_NAME = 'petplus_test'
+$env:NODE_ENV = 'test'
+$env:PETPLUS_BANCO_TESTE = '1'
+node --test tests/integration/seguranca-sessoes.test.js
+```
+
+O nome deve conter `test`; o opt-in é obrigatório. O exemplo não cria o banco nem define sua porta/credenciais. Sem o opt-in, a suíte é explicitamente ignorada.
+
+### Integração pelo navegador
+
+O teste de agendas cria um BANHISTA exclusivo na cópia e uma reserva pela interface do cliente, confere o mesmo ID no gestor/responsável e verifica conclusão/cancelamento após recarga.
+
+```powershell
+node --test tests/integration/agendas-navegador.test.js
+```
+
+Exige `DB_NAME` de teste, `PETPLUS_BANCO_TESTE=1`, API em `NODE_ENV=test`, frontend compilado/servido e URLs `API_URL`/`FRONT_URL` corretas. Defina `CHROME_PATH` para o navegador instalado quando necessário.
+
+As variáveis do terminal do teste não reconfiguram a API que já está rodando: confira também a conexão do servidor. Os testes escrevem dados na cópia e não devem apontar para o banco da equipe.
+
+### Outras suítes existentes
+
+| Comando | Escopo e efeito |
+|---|---|
+| `npm run test:db` | Integridade e regras diretamente no PostgreSQL; utiliza operações de teste. |
+| `npm run smoke` | HTTP, regras de negócio e perfis; grava dados de teste na API indicada por `API_URL`. |
+| `npm run e2e` | Navegador, API e banco; cria reservas, vendas e movimentações de estoque. |
+| `npm run verificar` | Executa unitários, reset e suítes integradas; recria o banco e exige ambiente descartável. |
+| `npm run reset` | Recria o esquema e carrega dados de demonstração. Não é comando de inicialização diária. |
+
+Os resultados observados estão no [registro de validação do projeto](../README.md#validação-dos-ajustes). A validação mais recente dos fluxos essenciais inclui testes de aplicação, com resultados e limites registrados nesse guia.
+
+## Limitações
+
+- Envio real de e-mail não implementado; a fila e o agendador existentes não equivalem a entrega por provedor externo.
+- A entrega real de e-mail e as operações de privacidade/backup pela interface ainda não estão concluídas.
+- A API possui paginação, rate limiting, renovação de sessão, logs estruturados e testes unitários; essas funcionalidades não devem constar como ausentes em uma lista de evolução.
+- A revisão completa da interface móvel permanece pendente.
+## Ajustes dos fluxos essenciais
+
+- `POST /auth/cadastro` aceita `pet` opcional com nome, espécie, raça, porte, idade e observações de saúde. O tutor é definido pela conta criada, nunca por um identificador enviado dentro de `pet`. Conta, cliente, pet e sessão são gravados na mesma transação.
+- `PATCH /agendamentos/:id/concluir` aceita `observacao` opcional (até 2.000 caracteres). Status, registro de saúde e pontos são gravados juntos. O registro utiliza a data local do agendamento e identifica o serviço e o número da reserva. Repetições retornam 404 sem duplicar o registro.
+- Não há migração nova nem preenchimento retroativo de históricos. As chamadas antigas de conclusão sem corpo continuam aceitas.
+- `tests/unit/fluxos-essenciais.test.js` injeta falhas de pet, sessão, histórico e pontos para verificar rollback; não conecta ao banco. A integração `tests/integration/agendas-navegador.test.js` também verifica cadastro inicial, conclusão pela tela Atendimentos, observação no histórico e persistência após recarga.
+
+### Senha no cadastro administrativo de cliente
+
+A interface de cadastro pelo gestor envia `senha` em `POST /clientes`. Quando informada, a API aplica o mesmo schema de senha do cadastro público (8 a 72 caracteres, letra e número) e armazena somente o hash bcrypt. A confirmação não é enviada nem retornada. Por compatibilidade, consumidores antigos da API ainda podem omitir a senha; essas contas dependem da recuperação para definir uma senha conhecida. O envio real de e-mail continua pendente.
+
+O teste de navegador com PostgreSQL também cobre cadastro pelo gestor, bloqueio de senha ausente/confirmação diferente e login do cliente criado com seu primeiro pet. Contas existentes não tiveram suas senhas alteradas.
+
+## Ajustes de gestão e operações
+
+- Dashboard calcula receitas diretamente pelo `valor_total` líquido das vendas finalizadas, sem descontar novamente o desconto. Usa `TimeZone` local à transação para respeitar o fuso da unidade. Série de sete dias; ocupação da semana de segunda a domingo, excluindo cancelados e dias bloqueados da disponibilidade.
+- `POST /pets/:id/reativar` exige gestor e tutor ativo. `DELETE /pets/:id` também exige gestor, conforme RN03. Inativar tutor revoga sessões e inativa pets; reativar tutor preserva os pets inativos até uma reativação individual.
+- A interface utiliza `GET/PATCH /petshop`, `GET /relatorios/previa` e `GET /relatorios/exportar`. As prévias não registram exportação; downloads registram metadados. Estoque representa posição atual; PDF e CSV são os formatos expostos pela tela.
+- OpenAPI atualizado com a reativação de pets. Sem nova migração ou dependência.
+
+Teste integrado específico, com as mesmas pré-condições das demais integrações de navegador:
+
+```powershell
+node --test tests/integration/gestao-navegador.test.js
+```
+
+Exige `PETPLUS_BANCO_TESTE=1`, `DB_NAME` identificando uma cópia de testes, API em `NODE_ENV=test`, `FRONT_URL`, `API_URL` e navegador disponível. O cenário cria contas/reserva/venda e exportações na cópia; restaura as configurações, estorna sua venda e cancela sua reserva ao finalizar. Os cadastros e metadados permanecem na base descartável como evidência de teste. Capturas opcionais podem ser direcionadas por `PETPLUS_CAPTURAS` para uma pasta fora do repositório.

@@ -123,7 +123,7 @@ export default function Estoque() {
                   setEntrada(null)
                   toast(`+${q} un. adicionadas ao estoque de ${entrada.nome}.`, 'ok')
                 } catch (err) {
-                  toast(err instanceof ApiError ? err.message : 'Não foi possível registrar a entrada.', 'err')
+                  toast(err instanceof ApiError ? err.mensagem : 'Não foi possível registrar a entrada.', 'err')
                 }
               }}>Confirmar entrada</button>
             </>
@@ -153,7 +153,7 @@ export default function Estoque() {
                   await recarregar()
                   setEdit(null); toast('Produto atualizado no banco.', 'ok')
                 } catch (err) {
-                  toast(err instanceof ApiError ? err.message : 'Não foi possível salvar.', 'err')
+                  toast(err instanceof ApiError ? err.mensagem : 'Não foi possível salvar.', 'err')
                 }
               }}>Salvar</button>
             </>
@@ -188,7 +188,7 @@ export default function Estoque() {
               await recarregar()
               setExcluir(null); toast('Produto excluído (inativação lógica — histórico preservado).', 'ok')
             } catch (err) {
-              toast(err instanceof ApiError ? err.message : 'Não foi possível excluir.', 'err')
+              toast(err instanceof ApiError ? err.mensagem : 'Não foi possível excluir.', 'err')
             }
           }} />
       )}
@@ -208,7 +208,7 @@ export default function Estoque() {
           setNovoOpen(false)
           toast(`Produto ${p.nome} cadastrado no banco (UC08).`, 'ok')
         } catch (err) {
-          toast(err instanceof ApiError ? err.message : 'Não foi possível cadastrar o produto.', 'err')
+          toast(err instanceof ApiError ? err.mensagem : 'Não foi possível cadastrar o produto.', 'err')
           throw err
         }
       }} />}

@@ -58,6 +58,8 @@ const schema = z.object({
 
   // --- HTTP ------------------------------------------------------------
   CORS_ORIGIN: lista(['http://localhost:5173']),
+  APP_URL: z.string().url().default('http://localhost:5173'),
+  EXPOR_TOKEN_RECUPERACAO: booleano(false),
   BODY_LIMIT: z.string().min(1).default('1mb'),
   /** Atrás de proxy/balanceador: confiar em X-Forwarded-* para IP e protocolo. */
   TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
@@ -80,8 +82,9 @@ const schema = z.object({
 
   // --- E-mail / outbox (RF12/RF13/RF24) ---------------------------------
   /**
-   * `console` grava o e-mail renderizado no log (padrão: demonstra o fluxo
-   * inteiro sem provedor). Trocar por um provedor real é implementar um
+   * `console` registra metadados com corpo redigido; `arquivo` mascara
+   * links de recuperação. Nenhum deles entrega e-mail real.
+   * Trocar por um provedor real é implementar um
    * novo adaptador em `src/services/email.service.js` — o resto não muda.
    */
   EMAIL_TRANSPORT: z.enum(['console', 'arquivo']).default('console'),
@@ -152,6 +155,7 @@ export const config = {
   },
 
   http: {
+    appUrl: env.APP_URL.replace(/\/+$/, ''),
     corsOrigins: env.CORS_ORIGIN,
     bodyLimit: env.BODY_LIMIT,
     trustProxy: env.TRUST_PROXY,
@@ -182,6 +186,7 @@ export const config = {
   },
 
   email: {
+    exporTokenRecuperacao: env.EXPOR_TOKEN_RECUPERACAO && env.NODE_ENV !== 'production',
     transport: env.EMAIL_TRANSPORT,
     from: env.EMAIL_FROM,
     outboxDir: env.EMAIL_OUTBOX_DIR,

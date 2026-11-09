@@ -4,7 +4,6 @@ import { config } from '../config/env.js'
 import { query, withTransaction } from '../db/pool.js'
 import { ErroDeNegocio } from '../middleware/errors.js'
 import { criarSessao, revogarSessoesDoUsuario } from './sessao.service.js'
-import { modelos } from './email.service.js'
 
 /**
  * Autenticação (RF18 / RF24 / RNF02 / RNF11).
@@ -67,8 +66,8 @@ const usuarioResumo = (u) => ({
  * Cadastro público de tutor (RF01/RF02 — tela "Criar conta de cliente").
  * Exige consentimento LGPD explícito (RNF11).
  */
-export async function cadastrarCliente({ nome, email, telefone, senha, endereco, consentimento, ip, userAgent }) {
-  if (!consentimento) {
+export async function cadastrarCliente({ nome, email, telefone, senha, endereco, consentimento, pet, ip, userAgent }) {
+  if (consentimento !== true) {
     throw new ErroDeNegocio(
       'É necessário autorizar o uso dos seus dados e dos dados de saúde do pet (LGPD).',
       { status: 422, codigo: 'LGPD_CONSENTIMENTO' },
@@ -85,7 +84,7 @@ export async function cadastrarCliente({ nome, email, telefone, senha, endereco,
     throw new ErroDeNegocio('Nenhuma unidade cadastrada.', { status: 503, codigo: 'SEM_UNIDADE' })
   }
 
-  const usuario = await withTransaction({ tenantId: petshopId }, async (db) => {
+  return withTransaction({ tenantId: petshopId }, async (db) => {
     const { rows } = await db.query(
       `INSERT INTO usuario (petshop_id, perfil, nome, email, telefone, senha_hash, consent_lgpd, consent_em)
        VALUES ($1, 'CLIENTE', $2, $3, $4, $5, true, now())
@@ -97,20 +96,28 @@ export async function cadastrarCliente({ nome, email, telefone, senha, endereco,
        VALUES ($1, $2, $3, 0)`,
       [rows[0].id, petshopId, endereco ?? null],
     )
-    return rows[0]
+    const usuario = rows[0]
+    if (pet) {
+      await db.query(
+        `INSERT INTO pet (petshop_id, cliente_id, nome, especie, raca, porte, idade, observacoes_saude)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [petshopId, usuario.id, pet.nome, pet.especie, pet.raca ?? null, pet.porte ?? null,
+         pet.idade ?? null, pet.observacoesSaude ?? null],
+      )
+    }
+    // Conta, primeiro pet e sessão só existem se todas as gravações concluírem.
+    const sessao = await criarSessao({ usuario, ip, userAgent }, db)
+    return { ...sessao, usuario: usuarioResumo(usuario) }
   })
-
-  const sessao = await criarSessao({ usuario, ip, userAgent })
-  return { ...sessao, usuario: usuarioResumo(usuario) }
 }
 
 /**
  * Recuperação de senha (RF24).
  *
  * Grava o SHA-256 do token (nunca o token em claro), invalida os pedidos
- * anteriores ainda não usados e **enfileira o e-mail** na outbox — a
- * requisição não espera provedor nenhum. O token em claro só volta no
- * corpo da resposta fora de produção, para permitir demonstrar o fluxo.
+ * anteriores ainda não usados. A fila operacional guarda apenas um aviso
+ * sem segredo. Os transportes locais não entregam links de recuperação;
+ * a demonstração exige flag explícita, que nunca vale em produção.
  */
 export async function solicitarRecuperacao({ email }) {
   const { rows } = await query(SELECT_USUARIO, [email])
@@ -121,7 +128,7 @@ export async function solicitarRecuperacao({ email }) {
 
   const token = crypto.randomBytes(32).toString('hex')
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex')
-  const link = `${config.http.corsOrigins[0]}/#/redefinir-senha?token=${token}`
+  const link = `${config.http.appUrl}/#/redefinir-senha?token=${token}`
 
   await withTransaction({ tenantId: usuario.petshop_id, usuarioId: usuario.id }, async (db) => {
     // Um pedido novo cancela os anteriores: menos links vivos, menos risco.
@@ -135,11 +142,7 @@ export async function solicitarRecuperacao({ email }) {
       [usuario.petshop_id, usuario.id, tokenHash, MINUTOS_VALIDADE_RESET],
     )
 
-    const { texto } = modelos.recuperacaoSenha({
-      nome: usuario.nome,
-      link,
-      validadeMinutos: MINUTOS_VALIDADE_RESET,
-    })
+    const texto = 'Solicitação de recuperação de senha registrada. Link omitido por segurança; transporte local sem entrega de credencial.'
     await db.query(
       `INSERT INTO notificacao (petshop_id, usuario_id, canal, tipo, destinatario, mensagem, agendado_para)
        VALUES ($1, $2, 'e-mail', 'recuperacao_senha', $3, $4, now())`,
@@ -150,9 +153,8 @@ export async function solicitarRecuperacao({ email }) {
   return {
     enviado: true,
     expiraEmMinutos: MINUTOS_VALIDADE_RESET,
-    // Fora de produção devolvemos o token para a demonstração funcionar sem
-    // provedor de e-mail. Em produção ele só existe dentro da mensagem.
-    ...(config.isProd ? {} : { token, link }),
+    // Opt-in somente para demonstração local; nunca expõe em produção.
+    ...(config.email.exporTokenRecuperacao ? { token, link } : {}),
   }
 }
 
@@ -174,36 +176,38 @@ export async function redefinirSenha({ token, senha }) {
   await withTransaction(
     { tenantId: pedido.petshop_id, usuarioId: pedido.usuario_id },
     async (db) => {
+      // UPDATE disputa a própria linha: depois de esperar uma transação
+      // concorrente, o PostgreSQL reavalia usado_em antes de aceitar o token.
+      const consumido = await db.query(
+        `UPDATE token_recuperacao SET usado_em = now()
+          WHERE token_hash = $1 AND usado_em IS NULL AND expira_em > now()
+          RETURNING id, petshop_id, usuario_id`,
+        [tokenHash],
+      )
+      if (consumido.rowCount !== 1) {
+        throw new ErroDeNegocio('Link inválido ou expirado. Solicite um novo.', { status: 400, codigo: 'TOKEN_INVALIDO' })
+      }
       await db.query('UPDATE usuario SET senha_hash = $1 WHERE id = $2', [hash, pedido.usuario_id])
-      await db.query('UPDATE token_recuperacao SET usado_em = now() WHERE id = $1', [pedido.id])
+      await revogarSessoesDoUsuario({ tenantId: pedido.petshop_id, usuarioId: pedido.usuario_id }, db)
     },
   )
-
-  // Trocar a senha encerra todas as sessões: se o token vazou, o invasor
-  // perde o acesso no mesmo instante.
-  await revogarSessoesDoUsuario({ tenantId: pedido.petshop_id, usuarioId: pedido.usuario_id })
 
   return { redefinida: true }
 }
 
 /** Troca de senha do próprio usuário autenticado (exige a senha atual). */
 export async function trocarSenha({ usuarioId, tenantId, senhaAtual, novaSenha }) {
-  const senhaHash = await withTransaction({ tenantId, usuarioId }, async (db) => {
-    const { rows } = await db.query('SELECT senha_hash FROM usuario WHERE id = $1', [usuarioId])
-    return rows[0]?.senha_hash
-  })
-
-  const confere = senhaHash ? await bcrypt.compare(String(senhaAtual), senhaHash) : false
-  if (!confere) {
-    throw new ErroDeNegocio('Senha atual incorreta.', { status: 422, codigo: 'SENHA_ATUAL_INVALIDA' })
-  }
-
   const novoHash = await bcrypt.hash(novaSenha, config.auth.bcryptRounds)
-  await withTransaction({ tenantId, usuarioId }, (db) =>
-    db.query('UPDATE usuario SET senha_hash = $1 WHERE id = $2', [novoHash, usuarioId]))
-
-  // Mantém a sessão atual e derruba as demais: rotina de segurança.
-  await revogarSessoesDoUsuario({ tenantId, usuarioId })
+  await withTransaction({ tenantId, usuarioId }, async db => {
+    const { rows } = await db.query('SELECT senha_hash FROM usuario WHERE id = $1 FOR UPDATE', [usuarioId])
+    const confere = rows[0] && await bcrypt.compare(String(senhaAtual), rows[0].senha_hash)
+    if (!confere) {
+      throw new ErroDeNegocio('Senha atual incorreta.', { status: 422, codigo: 'SENHA_ATUAL_INVALIDA' })
+    }
+    await db.query('UPDATE usuario SET senha_hash = $1 WHERE id = $2', [novoHash, usuarioId])
+    // Decisão: encerrar TODAS as sessões, inclusive a atual, atomicamente.
+    await revogarSessoesDoUsuario({ tenantId, usuarioId }, db)
+  })
   return { alterada: true }
 }
 

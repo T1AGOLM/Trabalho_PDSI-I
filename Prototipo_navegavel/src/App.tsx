@@ -45,6 +45,7 @@ export default function App() {
   const [session, setSession] = React.useState<Sessao | null>(null)
   const [verificando, setVerificando] = React.useState(true)
   const [erroLogin, setErroLogin] = React.useState('')
+  const versaoSessao = React.useRef(0)
 
   // Retoma a sessão existente ao abrir/recarregar a página.
   React.useEffect(() => {
@@ -62,32 +63,41 @@ export default function App() {
   }, [])
 
   const nav = (name: string, params: Record<string, any> = {}) => {
-    if (name === 'login') void encerrar()
+    if (name === 'login' && session) { void encerrar(); return }
+    if (name === 'login') setErroLogin('')
     go(name, params)
   }
 
   /** Encerra a sessão no servidor (invalida o refresh token) e limpa o cache. */
   const encerrar = async () => {
-    await sairDaConta()
+    versaoSessao.current++
     setSession(null)
+    setErroLogin('')
+    go('login')
+    await sairDaConta()
   }
 
   /**
    * Login real (RF18): a senha é conferida contra o hash bcrypt no
-   * PostgreSQL e o servidor grava os cookies de sessão. Nenhum token passa
-   * pelo JavaScript da página.
+   * PostgreSQL e o servidor grava os cookies. A interface não persiste
+   * os tokens que a API também devolve para clientes externos.
    */
   const doLogin = async (email: string, senha: string) => {
+    const atual = ++versaoSessao.current
     setErroLogin('')
+    setSession(null)
     try {
       const sessao = await entrar(email, senha)
-      setSession(sessao)
+      if (atual !== versaoSessao.current) return
 
       // Carrega os dados antes de abrir a área logada, para que a primeira
       // tela já renderize com o conteúdo real do banco.
       await carregarDados(sessao)
+      if (atual !== versaoSessao.current) return
+      setSession(sessao)
       go(HOME_POR_PERFIL[sessao.perfil] ?? 'landing')
     } catch (err) {
+      if (atual !== versaoSessao.current || (err as Error).name === 'AbortError') return
       if (err instanceof ApiError) {
         setErroLogin(
           err.status === 0
@@ -103,9 +113,14 @@ export default function App() {
   }
 
   const doCadastro = async (dados: Parameters<typeof cadastrarTutor>[0]): Promise<Sessao> => {
+    const atual = ++versaoSessao.current
+    setSession(null)
+    setErroLogin('')
     const sessao = await cadastrarTutor(dados)
-    setSession(sessao)
+    if (atual !== versaoSessao.current) throw new DOMException('Cadastro cancelado.', 'AbortError')
     await carregarDados(sessao)
+    if (atual !== versaoSessao.current) throw new DOMException('Cadastro cancelado.', 'AbortError')
+    setSession(sessao)
     go('cli-inicio')
     return sessao
   }

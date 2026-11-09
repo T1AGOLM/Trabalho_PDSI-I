@@ -1,133 +1,52 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import { api, ApiError } from '../../api'
 import { useToast, Field } from '../../ui'
 
+type Unidade = { id: number; nome: string; email: string; telefone: string; endereco: string; cnpj: string; timezone: string; prazoEstornoDias: number; antecedenciaLembreteH: number; antecedenciaValidadeD: number; pontosPorReal: number }
 export default function Configuracoes() {
   const toast = useToast()
-  const [tab, setTab] = useState<'petshop' | 'notificacoes' | 'seguranca' | 'sistema'>('petshop')
-
-  const [nomePet, setNomePet] = useState('PetPlus — Unidade Vila Mariana')
-  const [emailPet, setEmailPet] = useState('contato@petplus.com.br')
-  const [lembrete24h, setLembrete24h] = useState(true)
-  const [push, setPush] = useState(true)
-  const [retorno, setRetorno] = useState(true)
-  const [prazoEstorno, setPrazoEstorno] = useState('7')
-
-  return (
-    <div>
-      <div className="page-head">
-        <div>
-          <h1>Configurações</h1>
-          <div className="sub">Preferências do sistema e conformidade (RNF11–RNF14)</div>
-        </div>
-      </div>
-
-      <div className="tabs">
-        {([['petshop', '🐾 Petshop'], ['notificacoes', '🔔 Notificações'], ['seguranca', '🔒 Segurança & LGPD'], ['sistema', '🖥 Sistema']] as const).map(([k, l]) => (
-          <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
-        ))}
-      </div>
-
-      {tab === 'petshop' && (
-        <div className="card card-pad" style={{ maxWidth: 720 }}>
-          <div className="form-grid">
-            <Field label="Nome do petshop" required full><input value={nomePet} onChange={e => setNomePet(e.target.value)} /></Field>
-            <Field label="E-mail de contato"><input value={emailPet} onChange={e => setEmailPet(e.target.value)} /></Field>
-            <Field label="Telefone"><input defaultValue="(11) 3555-0000" /></Field>
-            <Field label="Endereço" full><input defaultValue="Rua das Flores, 123 — Vila Mariana, São Paulo/SP" /></Field>
-            <Field label="CNPJ"><input defaultValue="12.345.678/0001-55" /></Field>
-            <Field label="Horário de funcionamento"><input defaultValue="Seg–Sáb, 08h–18h" /></Field>
-          </div>
-          <div className="form-actions">
-            <button className="btn btn-primary" onClick={() => toast('Dados do petshop salvos (simulado).', 'ok')}>Salvar alterações</button>
-          </div>
-        </div>
-      )}
-
-      {tab === 'notificacoes' && (
-        <div className="card card-pad" style={{ maxWidth: 720 }}>
-          <label className="checkbox-row mb-12" style={{ cursor: 'pointer' }}>
-            <input type="checkbox" checked={lembrete24h} onChange={e => setLembrete24h(e.target.checked)} />
-            <span><b>Lembrete de agendamento 24h antes</b> — enviado por e-mail para agendamentos “confirmados” (RF12/RN06).</span>
-          </label>
-          <label className="checkbox-row mb-12" style={{ cursor: 'pointer' }}>
-            <input type="checkbox" checked={push} onChange={e => setPush(e.target.checked)} />
-            <span><b>Notificações push (aplicativo)</b> — lembretes e avisos de vacina (RF22).</span>
-          </label>
-          <label className="checkbox-row mb-20" style={{ cursor: 'pointer' }}>
-            <input type="checkbox" checked={retorno} onChange={e => setRetorno(e.target.checked)} />
-            <span><b>Aviso de retorno de banho/tosa</b> — sugere agendamento após o intervalo configurado (RF13).</span>
-          </label>
-          <div className="form-grid">
-            <Field label="Intervalo de retorno banho/tosa (dias)"><input type="number" defaultValue={30} /></Field>
-            <Field label="Antecedência do aviso de vacina (dias)"><input type="number" defaultValue={15} /></Field>
-          </div>
-          <div className="form-actions">
-            <button className="btn btn-primary" onClick={() => toast('Preferências de notificação salvas (simulado).', 'ok')}>Salvar</button>
-          </div>
-        </div>
-      )}
-
-      {tab === 'seguranca' && (
-        <div style={{ maxWidth: 720 }}>
-          <div className="card card-pad mb-16">
-            <h3 className="mb-12" style={{ fontSize: 15 }}>Políticas comerciais</h3>
-            <Field label="Prazo máximo para estorno de vendas (dias) — RN11">
-              <input type="number" value={prazoEstorno} onChange={e => setPrazoEstorno(e.target.value)} />
-            </Field>
-            <div className="form-actions" style={{ marginTop: 12 }}>
-              <button className="btn btn-primary" onClick={() => toast('Política salva (simulado).', 'ok')}>Salvar</button>
-            </div>
-          </div>
-          <div className="card card-pad mb-16">
-            <h3 className="mb-12" style={{ fontSize: 15 }}>LGPD (RNF11)</h3>
-            <div className="kv"><span className="k">Consentimento exigido no cadastro</span><span className="v"><span className="badge badge-green">ativo</span></span></div>
-            <div className="kv"><span className="k">Política de privacidade publicada</span><span className="v"><span className="badge badge-green">sim</span></span></div>
-            <div className="kv"><span className="k">Dados sensíveis restritos por perfil</span><span className="v"><span className="badge badge-green">RN10</span></span></div>
-            <div className="flex mt-12">
-              <button className="btn btn-outline" onClick={() => toast('Política de Privacidade (simulada).', 'info')}>Ver política de privacidade</button>
-              <button className="btn btn-outline" onClick={() => toast('Relatório de tratamento de dados (simulado).', 'info')}>Exportar dados de um titular</button>
-            </div>
-          </div>
-          <div className="card card-pad">
-            <h3 className="mb-12" style={{ fontSize: 15 }}>Backup (RNF12)</h3>
-            <div className="kv"><span className="k">Último backup</span><span className="v">12/09/2026 às 03:00</span></div>
-            <div className="kv"><span className="k">Frequência</span><span className="v">Diária · retenção 30 dias</span></div>
-            <div className="flex mt-12">
-              <button className="btn btn-primary" onClick={() => toast('Backup manual disparado (simulado).', 'ok')}>Fazer backup agora</button>
-              <button className="btn btn-outline" onClick={() => toast('Histórico de backups (simulado).', 'info')}>Ver histórico</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {tab === 'sistema' && (
-        <div style={{ maxWidth: 720 }}>
-          <div className="card card-pad mb-16">
-            <h3 className="mb-12" style={{ fontSize: 15 }}>Multi-tenant (RNF13)</h3>
-            <table className="tbl">
-              <thead><tr><th>Unidade</th><th>Domínio</th><th>Status</th></tr></thead>
-              <tbody>
-                <tr><td>PetPlus — Vila Mariana</td><td>vilamariana.petplus.com.br</td><td><span className="badge badge-green">ativa</span></td></tr>
-                <tr><td>PetPlus — Pinheiros</td><td>pinheiros.petplus.com.br</td><td><span className="badge badge-green">ativa</span></td></tr>
-                <tr><td>PetPlus — Santos</td><td>santos.petplus.com.br</td><td><span className="badge badge-amber">implantação</span></td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div className="card card-pad">
-            <h3 className="mb-12" style={{ fontSize: 15 }}>Preferências regionais (RNF14/RNF15)</h3>
-            <div className="form-grid">
-              <Field label="Idioma">
-                <select defaultValue="pt-BR"><option value="pt-BR">Português (Brasil)</option><option>English (em breve)</option><option>Español (em breve)</option></select>
-              </Field>
-              <Field label="Fuso horário"><select defaultValue="america-sao-paulo"><option value="america-sao-paulo">América/São_Paulo (GMT-3)</option></select></Field>
-              <Field label="Moeda"><select defaultValue="BRL"><option value="BRL">Real (R$)</option></select></Field>
-            </div>
-            <div className="alert info mt-16" style={{ marginBottom: 0 }}>
-              Compatibilidade garantida com as duas versões mais recentes de Chrome, Firefox, Edge e Safari (RNF15).
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
+  const [dados, setDados] = useState<Unidade | null>(null)
+  const [erro, setErro] = useState('')
+  const [salvando, setSalvando] = useState(false)
+  const [versao, setVersao] = useState(0)
+  useEffect(() => {
+    let atual = true
+    setDados(null); setErro('')
+    api.petshop.buscar().then(d => { if (atual) setDados(d) })
+      .catch(e => { if (atual) setErro(e instanceof ApiError ? e.mensagem : 'Não foi possível consultar as configurações.') })
+    return () => { atual = false }
+  }, [versao])
+  const alterar = (campo: keyof Unidade, valor: string | number) => setDados(d => d ? { ...d, [campo]: valor } : d)
+  const salvar = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!dados || salvando) return
+    setSalvando(true); setErro('')
+    try {
+      const { nome, email, telefone, endereco, prazoEstornoDias, antecedenciaLembreteH, antecedenciaValidadeD, pontosPorReal } = dados
+      const atualizada = await api.petshop.atualizar({ nome, ...(email ? { email } : {}), telefone: telefone ?? '', endereco: endereco ?? '', prazoEstornoDias, antecedenciaLembreteH, antecedenciaValidadeD, pontosPorReal })
+      setDados(atualizada)
+      toast('Configurações salvas no banco.', 'ok')
+    } catch (err) { setErro(err instanceof ApiError ? err.mensagem : 'Não foi possível salvar as configurações.') }
+    finally { setSalvando(false) }
+  }
+  return <div>
+    <div className="page-head"><div><h1>Configurações</h1><div className="sub">Dados e parâmetros da unidade</div></div><button className="btn btn-outline" disabled={salvando} onClick={() => setVersao(v => v + 1)}>Recarregar configurações</button></div>
+    {erro && <div role="alert" className="alert danger">{erro}</div>}
+    {!dados && !erro && <div role="status" className="alert info">Carregando configurações…</div>}
+    {dados && <form onSubmit={salvar} className="card card-pad" style={{ maxWidth: 850 }}><fieldset disabled={salvando} style={{ border: 0, padding: 0 }}>
+      <h3 className="mb-12">Dados do petshop</h3><div className="form-grid">
+        <Field label="Nome do petshop" required full><input aria-label="Nome do petshop" required minLength={3} maxLength={150} value={dados.nome} onChange={e => alterar('nome', e.target.value)} /></Field>
+        <Field label="E-mail de contato" required><input aria-label="E-mail de contato" required type="email" value={dados.email ?? ''} onChange={e => alterar('email', e.target.value)} /></Field>
+        <Field label="Telefone"><input aria-label="Telefone do petshop" maxLength={20} value={dados.telefone ?? ''} onChange={e => alterar('telefone', e.target.value)} /></Field>
+        <Field label="Endereço" full><input aria-label="Endereço do petshop" maxLength={255} value={dados.endereco ?? ''} onChange={e => alterar('endereco', e.target.value)} /></Field>
+      </div><div className="divider" /><h3 className="mb-12">Políticas e notificações</h3><div className="form-grid">
+        <Field label="Prazo de estorno (dias)"><input aria-label="Prazo de estorno" required type="number" min={0} max={365} value={dados.prazoEstornoDias} onChange={e => alterar('prazoEstornoDias', e.target.value)} /></Field>
+        <Field label="Antecedência do lembrete (horas)"><input aria-label="Antecedência do lembrete" required type="number" min={1} max={168} value={dados.antecedenciaLembreteH} onChange={e => alterar('antecedenciaLembreteH', e.target.value)} /></Field>
+        <Field label="Antecedência dos alertas de validade (dias)"><input aria-label="Antecedência da validade" required type="number" min={1} max={365} value={dados.antecedenciaValidadeD} onChange={e => alterar('antecedenciaValidadeD', e.target.value)} /></Field>
+        <Field label="Pontos por real"><input aria-label="Pontos por real" required type="number" min={0} max={1000} step="0.01" value={dados.pontosPorReal} onChange={e => alterar('pontosPorReal', e.target.value)} /></Field>
+      </div><div className="alert info mt-16">Os parâmetros são utilizados pelas regras do sistema. A entrega real de e-mails ainda depende da configuração de um provedor.</div>
+      <div className="form-actions"><button className="btn btn-primary" type="submit" disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar alterações'}</button></div>
+    </fieldset></form>}
+    {dados && <div className="card card-pad mt-16" style={{ maxWidth: 850 }}><h3>Informações da unidade</h3><p>CNPJ: {dados.cnpj || 'Não informado'} · Fuso horário: {dados.timezone}</p><p className="small muted">A gestão de backups e as ações de privacidade ainda não estão disponíveis nesta tela.</p></div>}
+  </div>
 }
