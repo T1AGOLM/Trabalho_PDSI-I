@@ -4,30 +4,42 @@ import { api, ApiError } from '../../api'
 import { fmtDate, weekdayShort, dayNum, petLabel, servicoLabel, colaboradorNome, clienteNome, fmtDateTime } from '../../utils'
 import { Modal, ConfirmDialog, useToast, EmptyState, Field } from '../../ui'
 import type { Agendamento } from '../../types'
+import { useAgenda } from '../../useAgenda'
+import { dataLocalISO, adicionarDias, diasDaSemana } from '../../utils'
 
 const HOURS = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00']
 const COLORS = ['#2a9d8f', '#b06f1d', '#2b7fc9', '#7c5cbf', '#c94f7c']
 
 export default function Agenda() {
   const toast = useToast()
-  const [agenda, setAgenda] = useState<Agendamento[]>([...db.agendamentos])
+  const [referencia, setReferencia] = useState(dataLocalISO)
+  const dias = diasDaSemana(referencia)
+  const hoje = dataLocalISO()
+  const { agendamentos: agenda, carregando, erro, atualizar } = useAgenda(dias[0], dias[6])
+  const [busca, setBusca] = useState('')
+  const [profissional, setProfissional] = useState('')
+  const [status, setStatus] = useState('')
+  const horas = [...new Set([...HOURS, ...agenda.map(a => a.dataHora.slice(11, 13) + ':00')])].sort()
   const [bloqueios, setBloqueios] = useState([...db.bloqueios])
   const [selected, setSelected] = useState<Agendamento | null>(null)
   const [cancelTarget, setCancelTarget] = useState<Agendamento | null>(null)
   const [novoOpen, setNovoOpen] = useState(false)
   const [remarcarOpen, setRemarcarOpen] = useState(false)
-  const [novaData, setNovaData] = useState('2026-09-14')
+  const [novaData, setNovaData] = useState(dataLocalISO)
   const [novaHora, setNovaHora] = useState('09:00')
 
-  const dias = ['2026-09-07', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11', '2026-09-12', '2026-09-13']
+
 
   const evColor = (colabId: number) => COLORS[colabId % COLORS.length]
 
   const eventsAt = (day: string, hour: string) =>
-    agenda.filter(a => a.dataHora === `${day}T${hour}`)
+    agenda.filter(a => a.dataHora.startsWith(`${day}T${hour.slice(0, 2)}:`)
+      && (!profissional || a.colaboradorId === Number(profissional))
+      && (!status || a.status === status)
+      && [petLabel(a.petId), clienteNome(a.clienteId), colaboradorNome(a.colaboradorId)].some(texto => texto.toLowerCase().includes(busca.toLowerCase())))
 
   const bloqueioAt = (day: string) =>
-    bloqueios.find(b => day >= b.dataInicio && day <= b.dataFim)
+    bloqueios.find(b => profissional && b.colaboradorId === Number(profissional) && day >= b.dataInicio && day <= b.dataFim)
 
   // Conflito: mesmo colaborador + mesmo dia/hora.
   //
@@ -40,7 +52,7 @@ export default function Agenda() {
   /** Recarrega `db` e refleta na grade local. */
   const recarregar = async () => {
     await sincronizar()
-    setAgenda([...db.agendamentos])
+    await atualizar()
     setBloqueios([...db.bloqueios])
   }
 
@@ -74,23 +86,32 @@ export default function Agenda() {
       <div className="page-head">
         <div>
           <h1>Agenda da semana</h1>
-          <div className="sub">07/09 a 13/09/2026 · clique em um agendamento para detalhes (UC05–UC07)</div>
+          <div className="sub">{fmtDate(dias[0])} a {fmtDate(dias[6])} · clique em um agendamento para detalhes (UC05–UC07)</div>
         </div>
         <button className="btn btn-primary" onClick={openNovo}>➕ Novo agendamento</button>
       </div>
 
+      <div className="filter-bar" style={{ flexWrap: 'wrap' }}>
+        <button className="btn btn-outline" onClick={() => setReferencia(adicionarDias(referencia, -7))}>← Semana anterior</button>
+        <Field label="Data da agenda"><input aria-label="Data da agenda" type="date" value={referencia} onChange={e => { if (e.target.value) setReferencia(e.target.value) }} /></Field>
+        <button className="btn btn-outline" onClick={() => setReferencia(hoje)}>Hoje</button>
+        <button className="btn btn-outline" onClick={() => setReferencia(adicionarDias(referencia, 7))}>Próxima semana →</button>
+        <button className="btn btn-outline" disabled={carregando} onClick={() => void atualizar()}>Atualizar agenda</button>
+      </div>
+      {erro && <div className="alert danger" role="alert">{erro}</div>}
+      {carregando && <div className="alert info" role="status">Carregando agenda…</div>}
       <div className="filter-bar">
         <div className="search-box">
           <span className="s-ico">🔍</span>
-          <input placeholder="Filtrar por pet, cliente ou profissional..." />
+          <input placeholder="Filtrar por pet, cliente ou profissional..." value={busca} onChange={e => setBusca(e.target.value)} />
         </div>
-        <select className="field" style={{ padding: '9px 12px', borderRadius: 9, border: '1px solid var(--border)' }}>
-          <option>Todos os profissionais</option>
-          {db.colaboradores.filter(c => c.ativo).map(c => <option key={c.id}>{c.nome}</option>)}
+        <select className="field" aria-label="Profissional" value={profissional} onChange={e => setProfissional(e.target.value)} style={{ padding: '9px 12px', borderRadius: 9, border: '1px solid var(--border)' }}>
+          <option value="">Todos os profissionais</option>
+          {db.colaboradores.filter(c => c.ativo).map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
         </select>
-        <select className="field" style={{ padding: '9px 12px', borderRadius: 9, border: '1px solid var(--border)' }}>
-          <option>Todos os status</option>
-          <option>Confirmado</option><option>Concluído</option><option>Cancelado</option>
+        <select className="field" aria-label="Status" value={status} onChange={e => setStatus(e.target.value)} style={{ padding: '9px 12px', borderRadius: 9, border: '1px solid var(--border)' }}>
+          <option value="">Todos os status</option>
+          <option value="confirmado">Confirmado</option><option value="concluído">Concluído</option><option value="cancelado">Cancelado</option>
         </select>
         <div className="flex" style={{ marginLeft: 'auto', gap: 12 }}>
           <span className="flex tiny muted"><span style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--primary)' }} /> Confirmado</span>
@@ -102,21 +123,21 @@ export default function Agenda() {
       <div className="agenda-grid">
         <div className="agenda-cell head" />
         {dias.map(d => (
-          <div key={d} className={`agenda-cell head ${d === '2026-09-12' ? 'today' : ''}`}>
+          <div key={d} className={`agenda-cell head ${d === hoje ? 'today' : ''}`}>
             {weekdayShort(d)} {dayNum(d)}
           </div>
         ))}
 
-        {HOURS.map(h => (
+        {horas.map(h => (
           <React.Fragment key={h}>
             <div className="agenda-cell time">{h}</div>
             {dias.map(d => {
               const blq = bloqueioAt(d)
               const evs = eventsAt(d, h)
               return (
-                <div key={d + h} className={`agenda-cell ${d === '2026-09-12' ? 'today' : ''} ${h > '16:00' ? 'hide-sm' : ''}`}>
+                <div key={d + h} className={`agenda-cell ${d === hoje ? 'today' : ''} ${h > '16:00' ? 'hide-sm' : ''}`}>
                   {evs.map(a => (
-                    <div key={a.id}
+                    <div key={a.id} data-agendamento-id={a.id}
                       className={`agenda-ev ev-${a.status}`}
                       style={{ borderLeftColor: evColor(a.colaboradorId) }}
                       onClick={() => setSelected(a)}>
@@ -137,7 +158,7 @@ export default function Agenda() {
         <Modal title={`Agendamento #${selected.id}`} onClose={() => setSelected(null)}
           footer={
             <>
-              <button className="btn btn-outline" onClick={() => { setRemarcarOpen(true) }}>📅 Remarcar</button>
+              <button className="btn btn-outline" onClick={() => { setNovaData(selected.dataHora.slice(0, 10)); setNovaHora(selected.dataHora.slice(11, 16)); setRemarcarOpen(true) }}>📅 Remarcar</button>
               <button className="btn btn-danger" onClick={() => setCancelTarget(selected)} disabled={selected.status === 'cancelado'}>✕ Cancelar agendamento</button>
               <button className="btn btn-primary" onClick={() => setSelected(null)}>Fechar</button>
             </>
@@ -172,7 +193,7 @@ export default function Agenda() {
                   setRemarcarOpen(false)
                   toast('Agendamento remarcado e salvo no banco!', 'ok')
                 } catch (err) {
-                  toast(err instanceof ApiError ? err.message : 'Não foi possível remarcar.', 'err')
+                  toast(err instanceof ApiError ? err.mensagem : 'Não foi possível remarcar.', 'err')
                 }
               }}>Confirmar remarcação</button>
             </>
@@ -183,7 +204,7 @@ export default function Agenda() {
             </Field>
             <Field label="Novo horário">
               <select value={novaHora} onChange={e => setNovaHora(e.target.value)}>
-                {HOURS.map(h => <option key={h}>{h}</option>)}
+                {[...new Set([...HOURS, novaHora])].sort().map(h => <option key={h}>{h}</option>)}
               </select>
             </Field>
           </div>
@@ -204,20 +225,21 @@ export default function Agenda() {
               setCancelTarget(null)
               toast('Agendamento cancelado. Horário liberado na agenda.', 'ok')
             } catch (err) {
-              toast(err instanceof ApiError ? err.message : 'Não foi possível cancelar.', 'err')
+              toast(err instanceof ApiError ? err.mensagem : 'Não foi possível cancelar.', 'err')
             }
           }} />
       )}
 
       {/* Novo agendamento */}
-      {novoOpen && <NovoAgendamentoModal onClose={() => setNovoOpen(false)}
+      {novoOpen && <NovoAgendamentoModal dataInicial={referencia} onClose={() => setNovoOpen(false)}
         onCreate={async (novo) => {
           try {
             const id = await criar(novo)
+            setReferencia(novo.dataHora.slice(0, 10))
             setNovoOpen(false)
             toast(`Agendamento #${id} criado com status “confirmado”.`, 'ok')
           } catch (err) {
-            toast(err instanceof ApiError ? err.message : 'Não foi possível criar o agendamento.', 'err')
+            toast(err instanceof ApiError ? err.mensagem : 'Não foi possível criar o agendamento.', 'err')
             throw err
           }
         }}
@@ -233,7 +255,8 @@ function getServicoPreco(id: number) {
   return s ? s.preco.toFixed(2).replace('.', ',') : '—'
 }
 
-function NovoAgendamentoModal({ onClose, onCreate, temConflito }: {
+function NovoAgendamentoModal({ onClose, onCreate, temConflito, dataInicial }: {
+  dataInicial: string
   onClose: () => void
   onCreate: (a: Omit<Agendamento, 'id'>) => Promise<void>
   temConflito: (colabId: number, day: string, hour: string, ignoreId?: number) => boolean
@@ -245,7 +268,7 @@ function NovoAgendamentoModal({ onClose, onCreate, temConflito }: {
   const [petId, setPetId] = useState(String(db.pets[0]?.id ?? ''))
   const [servicoId, setServicoId] = useState(String(db.servicos[0]?.id ?? ''))
   const [colabId, setColabId] = useState(String(db.colaboradores.find(c => c.ativo)?.id ?? ''))
-  const [data, setData] = useState('2026-09-14')
+  const [data, setData] = useState(dataInicial)
   const [hora, setHora] = useState('09:00')
   const [erro, setErro] = useState('')
   const [salvando, setSalvando] = useState(false)

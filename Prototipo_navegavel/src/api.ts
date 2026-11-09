@@ -6,9 +6,9 @@
 //
 // Decisões de segurança que valem a pena registrar:
 //
-//  * **Nenhum token em JavaScript.** A sessão vive em cookies `httpOnly`
-//    gravados pelo servidor no login. Sem token no `localStorage`, um XSS
-//    não consegue roubar a sessão — o script da página não enxerga o cookie.
+//  * A interface usa cookies `httpOnly` e não persiste os tokens devolvidos
+//    para clientes de API. Isso reduz a exposição persistente a XSS;
+//    não impede um script malicioso de agir em nome do usuário.
 //  * **`credentials: 'include'`** para o cookie viajar junto, e a base é
 //    relativa (`/api`) para que front e API fiquem na mesma origem: cookie
 //    de primeira parte, sem CORS e sem `SameSite=None`.
@@ -17,7 +17,23 @@
 //    requisição original é repetida. O refresh token gira a cada uso, então
 //    uma sessão expirada não derruba o usuário no meio do trabalho.
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api'
+const API_URL = (import.meta.env?.VITE_API_URL as string | undefined) ?? '/api'
+
+let geracao = 0
+let controle = new AbortController()
+export const geracaoDaSessao = () => geracao
+
+/** Cada saída/troca de conta invalida também respostas já em trânsito. */
+export function invalidarRequisicoes() {
+  geracao++
+  controle.abort()
+  controle = new AbortController()
+  renovacao = null
+}
+
+function exigirGeracao(atual: number) {
+  if (atual !== geracao) throw new DOMException('Resposta de sessão anterior descartada.', 'AbortError')
+}
 
 /** Erro da API já traduzido, com o status HTTP e o código de negócio. */
 export class ApiError extends Error {
@@ -74,6 +90,7 @@ let renovacao: Promise<boolean> | null = null
  * servidor derrubaria a sessão inteira (proteção contra reuso).
  */
 function renovarSessao(): Promise<boolean> {
+  const atual = geracao
   renovacao ??= (async () => {
     try {
       await chamar('/auth/refresh', { metodo: 'POST', anonimo: true })
@@ -81,7 +98,7 @@ function renovarSessao(): Promise<boolean> {
     } catch {
       return false
     } finally {
-      renovacao = null
+      if (atual === geracao) renovacao = null
     }
   })()
   return renovacao
@@ -92,6 +109,7 @@ function renovarSessao(): Promise<boolean> {
 // ---------------------------------------------------------------------
 
 async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal }: Opcoes): Promise<T> {
+  const atual = geracao
   let resposta: Response
   try {
     resposta = await fetch(API_URL + caminho, {
@@ -99,7 +117,7 @@ async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal }: Opco
       credentials: 'include',
       headers: corpo !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
-      signal: sinal,
+      signal: sinal ?? controle.signal,
     })
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') throw err
@@ -110,9 +128,11 @@ async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal }: Opco
     )
   }
 
+  exigirGeracao(atual)
   if (resposta.status === 204) return undefined as T
 
   const texto = await resposta.text()
+  exigirGeracao(atual)
   let dados: any = null
   if (texto) {
     try {
@@ -136,13 +156,17 @@ async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal }: Opco
 }
 
 async function requisitar<T>(caminho: string, opcoes: Opcoes = {}): Promise<T> {
+  const atual = geracao
   try {
     return await chamar<T>(caminho, opcoes)
   } catch (err) {
     // Token expirado (30 min): renova e repete a MESMA chamada, uma vez.
     // O usuário não vê nada acontecer.
-    if (err instanceof ApiError && err.status === 401 && !opcoes.anonimo) {
-      if (await renovarSessao()) return chamar<T>(caminho, opcoes)
+    if (err instanceof ApiError && err.status === 401 && !opcoes.anonimo && atual === geracao) {
+      if (await renovarSessao()) {
+        exigirGeracao(atual)
+        return chamar<T>(caminho, opcoes)
+      }
     }
     throw err
   }
@@ -166,6 +190,7 @@ export async function buscarTudo<T>(
   params: Record<string, unknown> = {},
   sinal?: AbortSignal,
 ): Promise<T[]> {
+  const atual = geracao
   const primeira = await requisitar<{ dados: T[]; pagina: number; paginas: number }>(
     caminho + qs({ ...params, pagina: 1, limite: LIMITE_MAX }),
     { sinal },
@@ -174,12 +199,14 @@ export async function buscarTudo<T>(
   const paginas = Math.min(Number(primeira.paginas ?? 1), PAGINAS_MAX)
 
   for (let pagina = 2; pagina <= paginas; pagina += 1) {
+    exigirGeracao(atual)
     const proxima = await requisitar<{ dados: T[] }>(
       caminho + qs({ ...params, pagina, limite: LIMITE_MAX }),
       { sinal },
     )
     linhas.push(...(proxima.dados ?? []))
   }
+  exigirGeracao(atual)
   return linhas
 }
 
@@ -220,7 +247,7 @@ export const auth = {
       corpo: dados,
     }),
 
-  logout: () => requisitar<{ encerrada: boolean }>('/auth/logout', { metodo: 'POST' }),
+  logout: () => requisitar<{ encerrada: boolean }>('/auth/logout', { metodo: 'POST', anonimo: true }),
 
   recuperarSenha: (email: string) =>
     requisitar<{ enviado: boolean; token?: string }>('/auth/recuperar-senha', {
@@ -425,11 +452,11 @@ export const agendamentos = {
   agendaDoDia: (data: string) => requisitar<any[]>(`/agenda/dia${qs({ data })}`),
 
   /** Horários livres do profissional no dia (RF04/RF05), já sem conflito nem bloqueio. */
-  horariosLivres: (params: { colaboradorId: number; data: string; duracao?: number }) =>
-    requisitar<{ data: string; colaboradorId: number; duracao: number; horarios: string[] }>(
-      `/agenda/horarios-livres${qs(params)}`,
-    ),
-
+  horariosLivres: async (params: { colaboradorId: number; data: string; duracao?: number }) => ({
+    ...params,
+    duracao: params.duracao ?? 60,
+    horarios: await requisitar<string[]>(`/agenda/horarios-livres${qs(params)}`),
+  }),
   /** Vitrine da equipe para o tutor escolher quem atende (sem dados de contato). */
   profissionais: () =>
     requisitar<{ id: number; nome: string; cargo: string; disponibilidade: string }[]>('/profissionais'),

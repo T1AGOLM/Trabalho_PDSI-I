@@ -26,7 +26,7 @@ export default function Clientes() {
     setPets([...db.pets])
   }
 
-  const filtra = (texto: string) => texto.toLowerCase().includes(busca.toLowerCase())
+  const filtra = (texto: string | null | undefined) => (texto ?? '').toLowerCase().includes(busca.toLowerCase())
 
   const clientesFiltrados = clientes.filter(c => filtra(c.nome) || filtra(c.email) || filtra(c.telefone))
   const petsFiltrados = pets.filter(p => filtra(p.nome) || filtra(p.raca) || filtra(clienteNomeSafe(p.clienteId)))
@@ -72,7 +72,7 @@ export default function Clientes() {
                         <div className="bold">{c.nome}</div>
                         <div className="tiny muted">{c.email}</div>
                       </td>
-                      <td>{c.telefone}<div className="tiny muted">{c.endereco.split('—')[1] ?? c.endereco}</div></td>
+                      <td>{c.telefone}<div className="tiny muted">{c.endereco?.split('—')[1] ?? (c.endereco || '—')}</div></td>
                       <td>{petsDoCliente(c.id).map(p => p.nome).join(', ') || '—'}</td>
                       <td><span className="badge badge-teal">{c.pontosFidelidade} pts</span></td>
                       <td><span className={`badge ${c.ativo ? 'badge-green' : 'badge-gray'}`}>{c.ativo ? 'Ativo' : 'Inativo'}</span></td>
@@ -145,7 +145,7 @@ export default function Clientes() {
                 try {
                   await api.clientes.atualizar(editCli.id, {
                     nome: editCli.nome, email: editCli.email,
-                    telefone: editCli.telefone, endereco: editCli.endereco,
+                    telefone: editCli.telefone || undefined, endereco: editCli.endereco ?? '',
                   })
                   await recarregar()
                   setEditCli(null)
@@ -159,9 +159,9 @@ export default function Clientes() {
           <div className="form-grid">
             <Field label="Nome" required><input value={editCli.nome} onChange={e => setEditCli({ ...editCli, nome: e.target.value })} /></Field>
             <Field label="E-mail" required><input value={editCli.email} onChange={e => setEditCli({ ...editCli, email: e.target.value })} /></Field>
-            <Field label="Telefone"><input value={editCli.telefone} onChange={e => setEditCli({ ...editCli, telefone: e.target.value })} /></Field>
+            <Field label="Telefone"><input value={editCli.telefone ?? ''} onChange={e => setEditCli({ ...editCli, telefone: e.target.value })} /></Field>
             <Field label="Pontos de fidelidade"><input type="number" value={editCli.pontosFidelidade} onChange={e => setEditCli({ ...editCli, pontosFidelidade: Number(e.target.value) })} /></Field>
-            <Field label="Endereço" full><input value={editCli.endereco} onChange={e => setEditCli({ ...editCli, endereco: e.target.value })} /></Field>
+            <Field label="Endereço" full><input value={editCli.endereco ?? ''} onChange={e => setEditCli({ ...editCli, endereco: e.target.value })} /></Field>
           </div>
         </Modal>
       )}

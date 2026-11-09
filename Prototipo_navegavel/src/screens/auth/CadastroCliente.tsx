@@ -89,7 +89,7 @@ export default function CadastroCliente({ onCadastrar }: {
       if (err instanceof ApiError) {
         setErro(err.status === 409
           ? 'Este e-mail já está cadastrado. Tente fazer login.'
-          : err.message)
+          : err.mensagem)
       } else {
         setErro('Não foi possível concluir o cadastro. Tente novamente.')
       }

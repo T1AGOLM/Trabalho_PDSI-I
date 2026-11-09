@@ -78,3 +78,20 @@ export const clienteNome = (id?: number) =>
 
 export const colaboradorNome = (id: number) =>
   getColaborador(id)?.nome ?? `Colaborador #${id}`
+
+/** Datas de calendário locais: não converte o dia para UTC. */
+export const dataLocalISO = (data = new Date()) =>
+  `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, '0')}-${String(data.getDate()).padStart(2, '0')}`
+
+export const adicionarDias = (iso: string, quantidade: number) => {
+  const data = new Date(`${iso}T12:00:00`)
+  data.setDate(data.getDate() + quantidade)
+  return dataLocalISO(data)
+}
+
+/** Semana de segunda a domingo que contém o dia selecionado. */
+export const diasDaSemana = (iso: string) => {
+  const dia = new Date(`${iso}T12:00:00`).getDay()
+  const segunda = adicionarDias(iso, -((dia + 6) % 7))
+  return Array.from({ length: 7 }, (_, indice) => adicionarDias(segunda, indice))
+}

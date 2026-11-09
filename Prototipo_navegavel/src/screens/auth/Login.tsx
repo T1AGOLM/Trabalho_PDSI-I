@@ -1,7 +1,5 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import { useNav } from '../../shell'
-import { useToast } from '../../ui'
-import { usuarios } from '../../data'
 
 const PERFIL_META: Record<string, { icon: string; nome: string; desc: string }> = {
   GESTOR: { icon: '👑', nome: 'Gestor', desc: 'Painel gerencial, relatórios, PDV e gestão completa' },
@@ -17,7 +15,7 @@ export default function Login({
   erroExterno?: string
 }) {
   const nav = useNav()
-  const toast = useToast()
+  const campoEmail = useRef<HTMLInputElement>(null)
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
   const [erro, setErro] = useState('')
@@ -80,7 +78,7 @@ export default function Login({
             <form onSubmit={submit}>
               <div className="field mb-16">
                 <label>E-mail <span className="req">*</span></label>
-                <input type="email" placeholder="voce@email.com" value={email} onChange={e => { setEmail(e.target.value); setErro('') }} />
+                <input ref={campoEmail} type="email" placeholder="voce@email.com" value={email} onChange={e => { setEmail(e.target.value); setErro('') }} />
               </div>
               <div className="field mb-16">
                 <label>Senha <span className="req">*</span></label>
@@ -98,23 +96,21 @@ export default function Login({
             </form>
 
             <div className="demo-accounts">
-              <div className="d-t">Acesso rápido (senha: 123)</div>
-              {usuarios.map(u => {
-                const m = PERFIL_META[u.perfil]
-                return (
-                  <button key={u.email} className="demo-btn"
-                    onClick={() => { setEmail(u.email); setSenha('123'); setErro(''); onLogin(u.email, '123') }}>
-                    <span className="d-ico">{m.icon}</span>
-                    <span style={{ flex: 1 }}>
-                      <b>{m.nome}</b>
-                      <span className="d-mail">{u.email}</span>
-                    </span>
-                    <span className="tiny" style={{ color: 'var(--text-3)' }}>{m.desc}</span>
-                  </button>
-                )
-              })}
+              <div className="d-t">Acessar com minha conta</div>
+              {Object.entries(PERFIL_META).map(([perfil, m]) => (
+                <button key={perfil} type="button" className="demo-btn" disabled={enviando}
+                  onClick={() => {
+                    setEmail(''); setSenha(''); setErro('')
+                    campoEmail.current?.focus()
+                    campoEmail.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  }}>
+                  <span className="d-ico">{m.icon}</span>
+                  <b style={{ flex: 1 }}>{m.nome}</b>
+                  <span className="tiny" style={{ color: 'var(--text-3)' }}>{m.desc}</span>
+                </button>
+              ))}
+              <div className="tiny muted mt-8">Informe seu e-mail e sua senha e clique em Entrar. O perfil é identificado pela sua conta.</div>
             </div>
-
             <div className="mt-16 center small" style={{ color: 'var(--text-2)' }}>
               É novo por aqui? <a href="#/cadastro" onClick={() => nav('cadastro')}>Criar conta de cliente</a>
             </div>

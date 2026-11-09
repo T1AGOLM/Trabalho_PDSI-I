@@ -123,7 +123,7 @@ export default function Vendas() {
               setEstornar(null)
               toast('Venda estornada. Estoque restaurado automaticamente (UC12).', 'ok')
             } catch (err) {
-              toast(err instanceof ApiError ? err.message : 'Não foi possível estornar a venda.', 'err')
+              toast(err instanceof ApiError ? err.mensagem : 'Não foi possível estornar a venda.', 'err')
             } finally {
               setEstornando(false)
             }

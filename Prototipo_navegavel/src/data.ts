@@ -3,7 +3,7 @@ import type {
   Notificacao, PacoteServico, PerfilUsuario, Pet, Produto, RegistroSaude,
   Relatorio, Servico, Venda,
 } from './types'
-import { api, ApiError } from './api'
+import { api, ApiError, geracaoDaSessao, invalidarRequisicoes } from './api'
 
 // ===== Estado do PetPlus — servido pelo PostgreSQL =====
 //
@@ -67,23 +67,12 @@ export const db: {
   fidelidade: null,
 }
 
-/**
- * Contas de demonstração mostradas na tela de login (UC01).
- * São as mesmas cargas do seed (`npm run seed`), com a senha de demonstração
- * `123` — que existe só para a apresentação; o cadastro real exige a
- * política de senha do RNF02 (8+ caracteres, com letra e número).
- */
-export const usuarios = [
-  { email: 'gestor@petplus.com', senha: '123', perfil: 'GESTOR', nome: 'Marcos Ruan' },
-  { email: 'colab@petplus.com', senha: '123', perfil: 'COLABORADOR', nome: 'Juliana Ferreira' },
-  { email: 'cliente@petplus.com', senha: '123', perfil: 'CLIENTE', nome: 'Ana Beatriz Souza' },
-]
-
 // =====================================================================
 // Sessão
 // =====================================================================
 
 export type Sessao = { id: number; perfil: PerfilUsuario; nome: string; email: string }
+let encerramento: Promise<void> | null = null
 
 /**
  * Sessão atual, segundo o SERVIDOR.
@@ -104,6 +93,9 @@ export async function restaurarSessao(): Promise<Sessao | null> {
 
 /** Login (RF18). O servidor grava os cookies de sessão na resposta. */
 export async function entrar(email: string, senha: string): Promise<Sessao> {
+  // Evita que um logout lento limpe os cookies de um login mais recente.
+  await encerramento
+  limparSessaoLocal()
   const { usuario } = await api.auth.login(email, senha)
   return { id: usuario.id, perfil: usuario.perfil, nome: usuario.nome, email: usuario.email }
 }
@@ -117,17 +109,29 @@ export async function cadastrar(dados: {
   endereco?: string
   consentimento: boolean
 }): Promise<Sessao> {
+  await encerramento
+  limparSessaoLocal()
   const { usuario } = await api.auth.cadastro(dados)
   return { id: usuario.id, perfil: usuario.perfil, nome: usuario.nome, email: usuario.email }
 }
 
 /** Encerra a sessão no servidor e descarta o cache local. */
 export async function sair(): Promise<void> {
-  try {
-    await api.auth.logout()
-  } finally {
-    limparDados()
-  }
+  // Limpa ANTES da rede: mesmo um servidor lento não mantém dados na tela.
+  limparSessaoLocal()
+  encerramento ??= api.auth.logout().then(() => {}).catch(() => {
+    // Sem rede não é possível garantir revogação remota. O estado local
+    // continua encerrado; o servidor não é apresentado como desconectado.
+  }).finally(() => { encerramento = null })
+  await encerramento
+}
+
+function limparSessaoLocal() {
+  invalidarRequisicoes()
+  limparDados()
+  carregados.clear()
+  perfilCorrente = null
+  usuarioCorrente = null
 }
 
 function limparDados() {
@@ -167,31 +171,33 @@ const RECURSOS_POR_PERFIL: Record<PerfilUsuario, Recurso[]> = {
 }
 
 /** Como buscar cada coleção. Uma função por recurso, sem estado global. */
-const CARREGADORES: Record<Recurso, () => Promise<void>> = {
-  clientes: async () => { db.clientes = await api.clientes.listar() },
-  pets: async () => { db.pets = await api.pets.listar() },
-  colaboradores: async () => { db.colaboradores = await api.colaboradores.listar() },
-  servicos: async () => { db.servicos = await api.servicos.listar() },
-  fornecedores: async () => { db.fornecedores = await api.fornecedores.listar() },
-  produtos: async () => { db.produtos = await api.produtos.listar() },
-  agendamentos: async () => { db.agendamentos = await api.agendamentos.listar() },
-  bloqueios: async () => { db.bloqueios = await api.bloqueios.listar() },
-  vendas: async () => { db.vendas = await api.vendas.listar() },
-  registrosSaude: async () => { db.registrosSaude = await api.registrosSaude.listar() },
-  pacotes: async () => { db.pacotes = await api.assinaturas.listar() },
-  avaliacoes: async () => { db.avaliacoes = await api.avaliacoes.listar() },
-  notificacoes: async () => { db.notificacoes = await api.notificacoes.listar() },
-  relatorios: async () => { db.relatorios = await api.relatorios.listar() },
-  dashboard: async () => { db.dashboard = await api.dashboard.resumo() },
+const CARREGADORES: Record<Recurso, () => Promise<Partial<typeof db>>> = {
+  clientes: async () => ({ clientes: await api.clientes.listar() }),
+  pets: async () => ({ pets: await api.pets.listar() }),
+  colaboradores: async () => ({ colaboradores: await api.colaboradores.listar() }),
+  servicos: async () => ({ servicos: await api.servicos.listar() }),
+  fornecedores: async () => ({ fornecedores: await api.fornecedores.listar() }),
+  produtos: async () => ({ produtos: await api.produtos.listar() }),
+  agendamentos: async () => ({ agendamentos: await api.agendamentos.listar() }),
+  bloqueios: async () => ({ bloqueios: await api.bloqueios.listar() }),
+  vendas: async () => ({ vendas: await api.vendas.listar() }),
+  registrosSaude: async () => ({ registrosSaude: await api.registrosSaude.listar() }),
+  pacotes: async () => ({ pacotes: await api.assinaturas.listar() }),
+  avaliacoes: async () => ({ avaliacoes: await api.avaliacoes.listar() }),
+  notificacoes: async () => ({ notificacoes: await api.notificacoes.listar() }),
+  relatorios: async () => ({ relatorios: await api.relatorios.listar() }),
+  dashboard: async () => ({ dashboard: await api.dashboard.resumo() }),
   fidelidade: async () => {
-    db.fidelidade = await api.clientes.minhaFidelidade()
-    db.clienteAtual = await api.clientes.buscar(db.fidelidade.clienteId)
+    const fidelidade = await api.clientes.minhaFidelidade()
+    const clienteAtual = await api.clientes.buscar(fidelidade.clienteId)
+    return { fidelidade, clienteAtual }
   },
 }
 
 /** Recursos que já foram carregados nesta sessão (evita refazer a busca). */
 const carregados = new Set<Recurso>()
 let perfilCorrente: PerfilUsuario | null = null
+let usuarioCorrente: number | null = null
 
 /** Aplica o recorte de perfil: o tutor usa a carga "dele". */
 function recursosDe(perfil: PerfilUsuario): Recurso[] {
@@ -206,21 +212,22 @@ function recursosDe(perfil: PerfilUsuario): Recurso[] {
  * agenda ainda abre. O erro fica no console e o recurso permanece vazio.
  */
 export async function carregarDados(sessao: Sessao): Promise<boolean> {
-  if (perfilCorrente && perfilCorrente !== sessao.perfil) {
-    limparDados()
-    carregados.clear()
+  if (usuarioCorrente !== sessao.id || perfilCorrente !== sessao.perfil) {
+    limparSessaoLocal()
   }
   perfilCorrente = sessao.perfil
+  usuarioCorrente = sessao.id
+  const atual = geracaoDaSessao()
 
   const resultados = await Promise.allSettled(
     recursosDe(sessao.perfil)
       .filter((recurso) => !carregados.has(recurso))
       .map(async (recurso) => {
-        await carregarRecurso(recurso, sessao.perfil)
-        carregados.add(recurso)
+        if (await carregarRecurso(recurso, sessao.perfil, atual)) carregados.add(recurso)
       }),
   )
 
+  if (atual !== geracaoDaSessao()) return false
   if (!resultados.length) return true
 
   const falhas = resultados.filter((r) => r.status === 'rejected') as PromiseRejectedResult[]
@@ -228,27 +235,33 @@ export async function carregarDados(sessao: Sessao): Promise<boolean> {
   return falhas.length < resultados.length
 }
 
-async function carregarRecurso(recurso: Recurso, perfil: PerfilUsuario) {
+async function buscarRecurso(recurso: Recurso, perfil: PerfilUsuario): Promise<Partial<typeof db>> {
   if (perfil === 'CLIENTE') {
     // O tutor não usa os endpoints administrativos: as coleções dele saem
     // das rotas próprias (/pets/meus, /fidelidade…).
     switch (recurso) {
-      case 'pets': db.pets = await api.pets.meus(); return
+      case 'pets': return { pets: await api.pets.meus() }
       // O tutor recebe só a vitrine da equipe: nome, cargo e grade. Nada de
       // telefone/e-mail de colega (RNF11 — minimização de dados pessoais).
       case 'colaboradores': {
         const profissionais = await api.agendamentos.profissionais()
-        db.colaboradores = profissionais.map((p) => ({
+        return { colaboradores: profissionais.map((p) => ({
           ...p, ativo: true, telefone: '', email: '',
-        })) as Colaborador[]
-        return
+        })) as Colaborador[] }
       }
-      case 'pacotes': db.pacotes = await api.assinaturas.listar(); return
+      case 'pacotes': return { pacotes: await api.assinaturas.listar() }
       case 'fidelidade': return CARREGADORES.fidelidade()
       default: return CARREGADORES[recurso]()
     }
   }
   return CARREGADORES[recurso]()
+}
+
+async function carregarRecurso(recurso: Recurso, perfil: PerfilUsuario, atual: number) {
+  const dados = await buscarRecurso(recurso, perfil)
+  if (atual !== geracaoDaSessao()) return false
+  Object.assign(db, dados)
+  return true
 }
 
 /**
@@ -261,13 +274,15 @@ async function carregarRecurso(recurso: Recurso, perfil: PerfilUsuario) {
 export async function sincronizar(...recursos: Recurso[]): Promise<boolean> {
   if (!perfilCorrente) return false
   const alvos = recursos.length ? recursos : recursosDe(perfilCorrente)
+  const perfil = perfilCorrente
+  const atual = geracaoDaSessao()
 
   const resultados = await Promise.allSettled(
-    alvos.map((r) => carregarRecurso(r, perfilCorrente as PerfilUsuario)),
+    alvos.map((r) => carregarRecurso(r, perfil, atual)),
   )
   const falhas = resultados.filter((r) => r.status === 'rejected') as PromiseRejectedResult[]
   for (const f of falhas) console.warn('Falha ao sincronizar:', f.reason?.message ?? f.reason)
-  return falhas.length === 0
+  return atual === geracaoDaSessao() && falhas.length === 0
 }
 
 /**

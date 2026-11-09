@@ -1,33 +1,57 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { db } from '../../data'
 import { fmtTime, fmtDateTime, petLabel, servicoLabel, clienteNome, colaboradorNome, getPet } from '../../utils'
 import { Modal, useToast, EmptyState, Field } from '../../ui'
 import type { Agendamento } from '../../types'
+import { api, ApiError } from '../../api'
+import { dataLocalISO, adicionarDias, fmtDate } from '../../utils'
 
 export default function ColabAtendimentos() {
   const toast = useToast()
-  const [ags, setAgs] = useState<Agendamento[]>([...db.agendamentos])
+  const [data, setData] = useState(dataLocalISO)
+  const [ags, setAgs] = useState<Agendamento[]>([])
+  const [carregando, setCarregando] = useState(true)
+  const [erro, setErro] = useState('')
+  const [versao, setVersao] = useState(0)
+  useEffect(() => {
+    let atual = true
+    setCarregando(true); setErro(''); setAgs([])
+    api.agendamentos.listar({ de: data, ate: data })
+      .then(dados => { if (atual) setAgs(dados) })
+      .catch(err => { if (atual) setErro(err instanceof ApiError ? err.mensagem : 'Não foi possível consultar os atendimentos.') })
+      .finally(() => { if (atual) setCarregando(false) })
+    return () => { atual = false }
+  }, [data, versao])
   const [concluir, setConcluir] = useState<Agendamento | null>(null)
   const [obs, setObs] = useState('')
   const [produtosUsados, setProdutosUsados] = useState<string[]>([])
 
   const enfileirados = ags
-    .filter(a => a.dataHora.startsWith('2026-09-12'))
+    .filter(a => a.dataHora.startsWith(data))
     .sort((a, b) => a.dataHora.localeCompare(b.dataHora))
 
   return (
     <div>
       <div className="page-head">
         <div>
-          <h1>Atendimentos de hoje</h1>
-          <div className="sub">12/09/2026 · acompanhe a fila e conclua os serviços (RF11/UC13)</div>
+          <h1>{data === dataLocalISO() ? 'Atendimentos de hoje' : 'Atendimentos do dia selecionado'}</h1>
+          <div className="sub">{fmtDate(data)} · acompanhe a fila e conclua os serviços (RF11/UC13)</div>
         </div>
       </div>
 
+      <div className="filter-bar" style={{ flexWrap: 'wrap' }}>
+        <button className="btn btn-outline" onClick={() => { setConcluir(null); setData(adicionarDias(data, -1)) }}>← Dia anterior</button>
+        <label>Data dos atendimentos <input aria-label="Data dos atendimentos" type="date" value={data} onChange={e => { if (e.target.value) { setConcluir(null); setData(e.target.value) } }} /></label>
+        <button className="btn btn-outline" onClick={() => { setConcluir(null); setData(dataLocalISO()) }}>Hoje</button>
+        <button className="btn btn-outline" onClick={() => { setConcluir(null); setData(adicionarDias(data, 1)) }}>Próximo dia →</button>
+        <button className="btn btn-outline" disabled={carregando} onClick={() => { setConcluir(null); setVersao(v => v + 1) }}>Atualizar atendimentos</button>
+      </div>
+      {erro && <div role="alert" className="alert danger">{erro}</div>}
+      {carregando && <div role="status" className="alert info">Carregando atendimentos…</div>}
       <div className="card mb-16">
         <div className="card-head"><h3>Fila do dia — todos os profissionais</h3><span className="hint">ordem de horário</span></div>
         <div className="table-wrap">
-          {enfileirados.length === 0 ? <EmptyState icon="📭" title="Nenhum atendimento hoje" /> : (
+          {enfileirados.length === 0 ? (!carregando && !erro ? <EmptyState icon="📭" title="Nenhum atendimento nesta data" /> : null) : (
             <table className="tbl">
               <thead><tr><th>Horário</th><th>Pet</th><th>Serviço</th><th>Tutor</th><th>Profissional</th><th>Status</th><th className="right">Ação</th></tr></thead>
               <tbody>
