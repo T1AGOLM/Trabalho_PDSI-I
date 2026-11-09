@@ -160,6 +160,7 @@ export function inativar({ tenantId, usuarioId }, id) {
     )
     if (!rows[0]) return null
     await db.query('UPDATE pet SET ativo = false WHERE cliente_id = $1 AND petshop_id = $2', [id, tenantId])
+    await db.query('UPDATE refresh_token SET revogado_em = now() WHERE usuario_id = $1 AND petshop_id = $2 AND revogado_em IS NULL', [id, tenantId])
     return { id: rows[0].id, nome: rows[0].nome, ativo: false }
   })
 }
@@ -174,7 +175,7 @@ export function reativar({ tenantId, usuarioId }, id) {
       [id, tenantId],
     )
     if (!rows[0]) return null
-    await db.query('UPDATE pet SET ativo = true WHERE cliente_id = $1 AND petshop_id = $2', [id, tenantId])
+    // Pets são reativados individualmente: não recuperar os que já estavam inativos.
     return { id, ativo: true }
   })
 }

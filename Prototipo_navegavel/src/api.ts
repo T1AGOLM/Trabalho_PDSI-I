@@ -67,6 +67,7 @@ type Opcoes = {
   corpo?: unknown
   /** Sem renovação de sessão e sem repetir em 401 — login, cadastro, refresh. */
   anonimo?: boolean
+  arquivo?: boolean
   sinal?: AbortSignal
 }
 
@@ -110,7 +111,7 @@ function renovarSessao(): Promise<boolean> {
 // Núcleo HTTP
 // ---------------------------------------------------------------------
 
-async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal }: Opcoes): Promise<T> {
+async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal, arquivo }: Opcoes): Promise<T> {
   const atual = geracao
   let resposta: Response
   try {
@@ -132,6 +133,12 @@ async function chamar<T>(caminho: string, { metodo = 'GET', corpo, sinal }: Opco
 
   exigirGeracao(atual)
   if (resposta.status === 204) return undefined as T
+
+  if (resposta.ok && arquivo) {
+    const blob = await resposta.blob()
+    exigirGeracao(atual)
+    return blob as T
+  }
 
   const texto = await resposta.text()
   exigirGeracao(atual)
@@ -339,6 +346,7 @@ export const pets = {
     requisitar<any>(`/pets/${id}`, { metodo: 'PATCH', corpo: dados }),
 
   inativar: (id: number) => requisitar<any>(`/pets/${id}`, { metodo: 'DELETE' }),
+  reativar: (id: number) => requisitar<any>(`/pets/${id}/reativar`, { metodo: 'POST' }),
 }
 
 export const registrosSaude = {
@@ -575,9 +583,12 @@ export const relatorios = {
   listar: (params: Record<string, unknown> = {}) => buscarTudo<any>('/relatorios', params),
 
   previa: (params: { tipo: string; de?: string; ate?: string }) =>
-    requisitar<{ colunas: any[]; linhas: any[]; totais: any; geradoEm: string; periodo: string }>(
+    requisitar<{ titulo: string; colunas: { campo: string; rotulo: string; dinheiro?: boolean }[]; linhas: Record<string, any>[]; totais?: any }>(
       `/relatorios/previa${qs(params)}`,
     ),
+
+  exportar: (params: { tipo: string; formato: string; de?: string; ate?: string }) =>
+    requisitar<Blob>(`/relatorios/exportar${qs(params)}`, { arquivo: true }),
 
   /** URL do arquivo exportado — o navegador baixa usando o mesmo cookie de sessão. */
   urlExportacao: (params: { tipo: string; formato: string; de?: string; ate?: string }) =>

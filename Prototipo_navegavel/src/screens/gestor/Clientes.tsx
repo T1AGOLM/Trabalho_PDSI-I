@@ -16,7 +16,9 @@ export default function Clientes() {
   const [novoOpen, setNovoOpen] = useState(false)
   const [editCli, setEditCli] = useState<Cliente | null>(null)
   const [editPet, setEditPet] = useState<Pet | null>(null)
-  const [inativar, setInativar] = useState<{ tipo: 'cli' | 'pet'; item: Cliente | Pet } | null>(null)
+  const [inativar, setInativar] = useState<{ tipo: 'cli' | 'pet'; item: Cliente | Pet; reativar?: boolean } | null>(null)
+  const [alterandoStatus, setAlterandoStatus] = useState(false)
+  const operacaoStatus = React.useRef(false)
   const [detalhe, setDetalhe] = useState<Cliente | null>(null)
 
   /** Relê tutores e pets do banco depois de qualquer escrita. */
@@ -80,7 +82,7 @@ export default function Clientes() {
                         <div className="actions">
                           <button className="btn btn-ghost btn-sm" onClick={() => setDetalhe(c)}>Ver</button>
                           <button className="btn btn-outline btn-sm" onClick={() => setEditCli(c)}>Editar</button>
-                          <button className="btn btn-danger btn-sm" onClick={() => setInativar({ tipo: 'cli', item: c })}>Excluir</button>
+                          <button className="btn btn-outline btn-sm" onClick={() => setInativar({ tipo: 'cli', item: c, reativar: !c.ativo })}>{c.ativo ? 'Inativar' : 'Reativar'}</button>
                         </div>
                       </td>
                     </tr>
@@ -97,7 +99,7 @@ export default function Clientes() {
           <div className="table-wrap">
             {petsFiltrados.length === 0 ? <EmptyState icon="🔍" title="Nenhum pet encontrado" /> : (
               <table className="tbl">
-                <thead><tr><th>Pet</th><th>Espécie / Raça</th><th>Porte / Idade</th><th>Tutor</th><th>Saúde</th><th className="right">Ações</th></tr></thead>
+                <thead><tr><th>Pet</th><th>Espécie / Raça</th><th>Porte / Idade</th><th>Tutor</th><th>Saúde</th><th>Status</th><th className="right">Ações</th></tr></thead>
                 <tbody>
                   {petsFiltrados.map(p => (
                     <tr key={p.id} className={p.ativo ? '' : 'row-inactive'}>
@@ -106,10 +108,11 @@ export default function Clientes() {
                       <td>{p.porte}<div className="tiny muted">{p.idade} ano(s)</div></td>
                       <td>{clienteNomeSafe(p.clienteId)}</td>
                       <td style={{ maxWidth: 220 }}><span className="tiny muted">{p.observacoesSaude || '—'}</span></td>
+                      <td>{p.ativo ? 'Ativo' : 'Inativo'}</td>
                       <td>
                         <div className="actions">
                           <button className="btn btn-outline btn-sm" onClick={() => setEditPet(p)}>Editar</button>
-                          <button className="btn btn-danger btn-sm" onClick={() => setInativar({ tipo: 'pet', item: p })}>Excluir</button>
+                          <button className="btn btn-outline btn-sm" onClick={() => setInativar({ tipo: 'pet', item: p, reativar: !p.ativo })}>{p.ativo ? 'Inativar' : 'Reativar'}</button>
                         </div>
                       </td>
                     </tr>
@@ -240,20 +243,25 @@ export default function Clientes() {
 
       {/* Inativação (exclusão lógica) */}
       {inativar && (
-        <ConfirmDialog danger title="Inativar cadastro?"
-          message={`Esta é uma exclusão lógica (RF03): o registro de ${inativar.item.nome} será marcado como inativo, e não removido. Somente o Gestor pode excluir cadastros (RN03).`}
-          confirmLabel="Inativar"
-          onCancel={() => setInativar(null)}
+        <ConfirmDialog danger={!inativar.reativar} title={inativar.reativar ? 'Reativar cadastro?' : 'Inativar cadastro?'}
+          message={inativar.reativar
+            ? `Reativar ${inativar.item.nome}?${inativar.tipo === 'cli' ? ' Os pets do tutor devem ser reativados individualmente, na aba Pets.' : ''}`
+            : `Inativar ${inativar.item.nome}? O histórico será preservado.${inativar.tipo === 'cli' ? ' O acesso do cliente será bloqueado e seus pets também serão inativados.' : ''}`}
+          confirmLabel={alterandoStatus ? 'Salvando…' : inativar.reativar ? 'Reativar' : 'Inativar'}
+          onCancel={() => { if (!operacaoStatus.current) setInativar(null) }}
           onConfirm={async () => {
+            if (operacaoStatus.current) return
+            operacaoStatus.current = true; setAlterandoStatus(true)
             try {
-              if (inativar.tipo === 'cli') await api.clientes.inativar(inativar.item.id)
-              else await api.pets.inativar(inativar.item.id)
+              const recurso = inativar.tipo === 'cli' ? api.clientes : api.pets
+              if (inativar.reativar) await recurso.reativar(inativar.item.id)
+              else await recurso.inativar(inativar.item.id)
               await recarregar()
               setInativar(null)
-              toast('Cadastro inativado (exclusão lógica).', 'ok')
+              toast(inativar.reativar ? 'Cadastro reativado.' : 'Cadastro inativado. Histórico preservado.', 'ok')
             } catch (err) {
-              toast(err instanceof ApiError ? err.mensagem : 'Não foi possível inativar.', 'err')
-            }
+              toast(err instanceof ApiError ? err.mensagem : 'Não foi possível alterar o status.', 'err')
+            } finally { operacaoStatus.current = false; setAlterandoStatus(false) }
           }} />
       )}
     </div>

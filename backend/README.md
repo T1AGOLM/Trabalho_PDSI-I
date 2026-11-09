@@ -172,9 +172,9 @@ Os resultados observados estão no [registro de validação do projeto](../READM
 ## Limitações
 
 - Envio real de e-mail não implementado; a fila e o agendador existentes não equivalem a entrega por provedor externo.
-- Existem endpoints de exportação e configuração na API, mas as telas correspondentes ainda têm operações simuladas.
+- A entrega real de e-mail e as operações de privacidade/backup pela interface ainda não estão concluídas.
 - A API possui paginação, rate limiting, renovação de sessão, logs estruturados e testes unitários; essas funcionalidades não devem constar como ausentes em uma lista de evolução.
-- Dashboard, interface móvel e conteúdo demonstrativo de check-in/orientações permanecem pendentes nos guias principal e de frontend.
+- A revisão completa da interface móvel permanece pendente.
 ## Ajustes dos fluxos essenciais
 
 - `POST /auth/cadastro` aceita `pet` opcional com nome, espécie, raça, porte, idade e observações de saúde. O tutor é definido pela conta criada, nunca por um identificador enviado dentro de `pet`. Conta, cliente, pet e sessão são gravados na mesma transação.
@@ -187,3 +187,18 @@ Os resultados observados estão no [registro de validação do projeto](../READM
 A interface de cadastro pelo gestor envia `senha` em `POST /clientes`. Quando informada, a API aplica o mesmo schema de senha do cadastro público (8 a 72 caracteres, letra e número) e armazena somente o hash bcrypt. A confirmação não é enviada nem retornada. Por compatibilidade, consumidores antigos da API ainda podem omitir a senha; essas contas dependem da recuperação para definir uma senha conhecida. O envio real de e-mail continua pendente.
 
 O teste de navegador com PostgreSQL também cobre cadastro pelo gestor, bloqueio de senha ausente/confirmação diferente e login do cliente criado com seu primeiro pet. Contas existentes não tiveram suas senhas alteradas.
+
+## Ajustes de gestão e operações
+
+- Dashboard calcula receitas diretamente pelo `valor_total` líquido das vendas finalizadas, sem descontar novamente o desconto. Usa `TimeZone` local à transação para respeitar o fuso da unidade. Série de sete dias; ocupação da semana de segunda a domingo, excluindo cancelados e dias bloqueados da disponibilidade.
+- `POST /pets/:id/reativar` exige gestor e tutor ativo. `DELETE /pets/:id` também exige gestor, conforme RN03. Inativar tutor revoga sessões e inativa pets; reativar tutor preserva os pets inativos até uma reativação individual.
+- A interface utiliza `GET/PATCH /petshop`, `GET /relatorios/previa` e `GET /relatorios/exportar`. As prévias não registram exportação; downloads registram metadados. Estoque representa posição atual; PDF e CSV são os formatos expostos pela tela.
+- OpenAPI atualizado com a reativação de pets. Sem nova migração ou dependência.
+
+Teste integrado específico, com as mesmas pré-condições das demais integrações de navegador:
+
+```powershell
+node --test tests/integration/gestao-navegador.test.js
+```
+
+Exige `PETPLUS_BANCO_TESTE=1`, `DB_NAME` identificando uma cópia de testes, API em `NODE_ENV=test`, `FRONT_URL`, `API_URL` e navegador disponível. O cenário cria contas/reserva/venda e exportações na cópia; restaura as configurações, estorna sua venda e cancela sua reserva ao finalizar. Os cadastros e metadados permanecem na base descartável como evidência de teste. Capturas opcionais podem ser direcionadas por `PETPLUS_CAPTURAS` para uma pasta fora do repositório.

@@ -130,12 +130,26 @@ Os artefatos de modelagem devem ser conferidos contra as migrações posteriores
 - **Compatibilidade:** nenhuma migração ou dependência nova. A atualização do frontend deve acompanhar a do backend para o novo envio do primeiro pet.
 - **Validação em 09/11/2026:** 94 unitários do backend, 8 do frontend, 1 cenário de navegador com API simulada (incluindo falha de conclusão), 6 integrações de sessões e 1 cenário de navegador com API/PostgreSQL real aprovados. Este último verificou cadastro inicial, conclusão, observação nos históricos do colaborador e tutor e persistência após recarga. TypeScript e compilação Vite programática também aprovados. As integrações utilizaram a cópia exclusiva de testes; a reversão por falhas injetadas foi verificada com banco simulado.
 
+## Ajustes de gestão e operações
+
+| Área | Comportamento implementado |
+|---|---|
+| Dashboard (RF14/RF15) | Consulta a API ao abrir/atualizar. Faturamento líquido de vendas finalizadas no dia, semana até hoje e mês até hoje, no fuso da unidade; série de 7 dias, serviços concluídos, avaliações e alertas reais. |
+| Ocupação | Minutos não cancelados na semana de segunda a domingo divididos pela disponibilidade de profissionais ativos, descontando dias bloqueados. Sem capacidade fixa ou porcentagens ilustrativas. |
+| Configurações | Consulta e grava dados da unidade, prazo de estorno, antecedência de lembretes/validade e pontos por real. Falhas mantêm o formulário e apresentam erro. |
+| Relatórios (RF27) | Prévia real e download PDF/CSV com registro no histórico. Vendas, agendamentos e financeiro respeitam o período; estoque representa a posição atual. CSV abre em planilhas, sem prometer um arquivo XLSX. |
+| Atendimentos | Lista de confirmados sem alegação de presença. Observações de saúde dos pets da data substituem as recomendações fixas. |
+| Inativação (RF03/RN03) | Gestor inativa e reativa clientes/pets; API bloqueia outros perfis. Inativar tutor inativa pets e revoga suas sessões. Reativar tutor não reativa pets automaticamente; cada pet é reativado individualmente após o tutor. Histórico preservado. |
+
+A nova integração `backend/tests/integration/gestao-navegador.test.js` usa API, navegador e banco exclusivo de testes. Não exige nova migração ou pacote. A proteção das rotas foi conferida contra a RN03 do documento de requisitos; a exclusão definitiva não faz parte desse fluxo.
+
+Validação deste conjunto em 09/11/2026: 94 unitários do backend, 11 do frontend, 1 cenário de navegador com API simulada, 6 integrações de sessões e os 2 cenários de navegador/API/PostgreSQL (agendas/cadastros e gestão) aprovados. TypeScript e compilação Vite programática aprovados. Configurações, venda com desconto, prévias, bytes PDF/CSV, permissões e reativação individual foram exercitados na cópia exclusiva de testes. As cinco telas alteradas tiveram inspeção visual no Chrome desktop; validação móvel e nos demais navegadores permanece pendente.
+
 ## Limitações e pendências
 
 - O envio real de e-mail não está configurado; os transportes locais não entregam o link de recuperação.
-- Check-in rápido e orientações fixas da tela Atendimentos continuam demonstrativos; não representam presença confirmada nem orientação clínica individual.
-- O Dashboard mantém datas e alguns conteúdos ilustrativos do protótipo.
-- Configurações, Relatórios e ações de privacidade possuem operações simuladas na interface; a existência de endpoints na API não implica integração completa da tela.
+- O sistema lista agendamentos confirmados, mas não possui controle de chegada/check-in.
+- Ações de privacidade e gestão de backups pela interface ainda precisam ser implementadas e verificadas.
 - A navegação e a responsividade no celular precisam de revisão adicional.
 - Atendimentos concluídos antes deste ajuste não recebem registros de saúde retroativos automaticamente.
 

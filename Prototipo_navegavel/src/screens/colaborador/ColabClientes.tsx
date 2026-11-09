@@ -7,7 +7,7 @@ export default function ColabClientes() {
   const [busca, setBusca] = useState('')
   const [detalhe, setDetalhe] = useState<typeof db.clientes[0] | null>(null)
 
-  const filtra = (t: string) => t.toLowerCase().includes(busca.toLowerCase())
+  const filtra = (t: string | null | undefined) => (t ?? '').toLowerCase().includes(busca.toLowerCase())
   const clientes = db.clientes.filter(c => filtra(c.nome) || filtra(c.email) || filtra(c.telefone))
 
   return (

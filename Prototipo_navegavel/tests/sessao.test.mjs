@@ -145,3 +145,30 @@ test('calendário da agenda respeita data local, domingo e virada de ano', async
   assert.equal(utils.diasDaSemana('2027-01-03')[0], '2026-12-28')
   assert.equal(utils.adicionarDias('2028-02-28', 1), '2028-02-29')
 })
+
+test('exportação preserva bytes do arquivo e usa cookies da sessão', async t => {
+  const { api } = await modulos()
+  t.mock.method(globalThis, 'fetch', async (caminho, opcoes) => {
+    assert.match(String(caminho), /formato=PDF/)
+    assert.equal(opcoes.credentials, 'include')
+    return new Response('%PDF-arquivo-teste', { headers: { 'Content-Type': 'application/pdf' } })
+  })
+  const arquivo = await api.api.relatorios.exportar({ tipo:'vendas', formato:'PDF' })
+  assert.equal(await arquivo.text(), '%PDF-arquivo-teste')
+})
+
+test('exportação com erro apresenta a mensagem da API em vez de baixar JSON', async t => {
+  const { api } = await modulos()
+  t.mock.method(globalThis, 'fetch', async () => json({ erro:'Período inválido.' }, 422))
+  await assert.rejects(api.api.relatorios.exportar({ tipo:'vendas', formato:'CSV' }), e => e instanceof api.ApiError && e.status === 422 && e.mensagem === 'Período inválido.')
+})
+
+test('arquivo recebido após troca de sessão é descartado', async t => {
+  const { api } = await modulos()
+  let liberar
+  t.mock.method(globalThis, 'fetch', async () => new Promise(resolve => { liberar = resolve }))
+  const download = api.api.relatorios.exportar({ tipo:'estoque', formato:'CSV' })
+  api.invalidarRequisicoes()
+  liberar(new Response('dados da sessão antiga'))
+  await assert.rejects(download, e => e.name === 'AbortError')
+})

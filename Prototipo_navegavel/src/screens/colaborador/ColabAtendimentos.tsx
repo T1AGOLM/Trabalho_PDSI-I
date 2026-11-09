@@ -102,19 +102,21 @@ export default function ColabAtendimentos() {
 
       <div className="grid-2">
         <div className="card">
-          <div className="card-head"><h3>Check-in rápido</h3><span className="hint">pets presentes agora</span></div>
+          <div className="card-head"><h3>Agendamentos confirmados</h3><span className="hint">não representa confirmação de presença</span></div>
           <div className="card-pad flex" style={{ flexWrap: 'wrap', gap: 10 }}>
             {enfileirados.filter(a => a.status === 'confirmado').map(a => (
               <span key={a.id} className="badge badge-teal" style={{ fontSize: 12.5, padding: '7px 13px' }}>🐶 {getPet(a.petId)?.nome} · {fmtTime(a.dataHora)}</span>
             ))}
-            {enfileirados.filter(a => a.status === 'confirmado').length === 0 && <span className="muted small">Nenhum pet aguardando.</span>}
+            {enfileirados.filter(a => a.status === 'confirmado').length === 0 && <span className="muted small">Nenhum agendamento confirmado.</span>}
           </div>
         </div>
         <div className="card">
-          <div className="card-head"><h3>Orientações do dia</h3></div>
+          <div className="card-head"><h3>Observações de saúde dos pets</h3></div>
           <div className="card-pad">
-            <div className="alert warn mb-12">🧴 <span>Mimi (gata): usar shampoo hiperalergênico e sedação leve — ver observações de saúde.</span></div>
-            <div className="alert info mb-12" style={{ marginBottom: 0 }}>⚠️ <span>Thor: sobrepeso — reforçar orientação de dieta ao tutor na retirada.</span></div>
+            {[...new Set(enfileirados.filter(a => a.status !== 'cancelado').map(a => a.petId))].map(id => getPet(id)).filter(p => p?.observacoesSaude).map(p => (
+              <div className="alert warn mb-12" key={p!.id}><span><b>{p!.nome}:</b> {p!.observacoesSaude}</span></div>
+            ))}
+            {!enfileirados.some(a => a.status !== 'cancelado' && getPet(a.petId)?.observacoesSaude) && <span className="muted small">Nenhuma observação de saúde cadastrada para os pets desta data.</span>}
           </div>
         </div>
       </div>

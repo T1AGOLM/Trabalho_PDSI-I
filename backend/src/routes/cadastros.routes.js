@@ -265,12 +265,20 @@ cadastrosRoutes.patch('/pets/:id', autenticar,
     res.json(atualizado)
   }))
 
-cadastrosRoutes.delete('/pets/:id', autenticar, validar({ params: idParam }),
+cadastrosRoutes.delete('/pets/:id', autenticar, exigirPerfil('GESTOR'), validar({ params: idParam }),
   rota(async (req, res) => {
     await exigirDonoDoPet(req, req.paramsValidos.id)
     const inativado = await pets.inativar(contexto(req), req.paramsValidos.id)
     if (!inativado) throw new ErroNaoEncontrado('Pet')
     res.json(inativado)
+  }))
+
+/** Reativação administrativa: somente gestor (RN03). */
+cadastrosRoutes.post('/pets/:id/reativar', autenticar, exigirPerfil('GESTOR'), validar({ params: idParam }),
+  rota(async (req, res) => {
+    const pet = await pets.reativar(contexto(req), req.paramsValidos.id)
+    if (!pet) throw new ErroNaoEncontrado('Pet')
+    res.json(pet)
   }))
 
 // =====================================================================

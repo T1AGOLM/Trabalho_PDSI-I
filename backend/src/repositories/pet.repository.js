@@ -1,3 +1,4 @@
+import { ErroDeNegocio } from '../middleware/errors.js'
 import { withTransaction } from '../db/pool.js'
 import { criarFiltro } from '../db/filtros.js'
 import { listarPaginado } from '../db/consultas.js'
@@ -102,6 +103,16 @@ export function inativar({ tenantId, usuarioId }, id) {
 
 export function reativar({ tenantId, usuarioId }, id) {
   return withTransaction({ tenantId, usuarioId }, async (db) => {
+    // Mesma ordem da inativação de tutor: trava usuário antes de alterar pet.
+    // Impede reativação concorrente de pet de um tutor que está sendo inativado.
+    const tutor = await db.query(
+      `SELECT u.ativo FROM pet p JOIN usuario u ON u.id = p.cliente_id
+        WHERE p.id = $1 AND p.petshop_id = $2 FOR UPDATE OF u`, [id, tenantId],
+    )
+    if (!tutor.rows[0]) return null
+    if (!tutor.rows[0].ativo) {
+      throw new ErroDeNegocio('Reative o tutor antes de reativar o pet.', { status: 422, codigo: 'TUTOR_INATIVO' })
+    }
     const { rows } = await db.query(
       'UPDATE pet SET ativo = true WHERE id = $1 AND petshop_id = $2 RETURNING id',
       [id, tenantId],

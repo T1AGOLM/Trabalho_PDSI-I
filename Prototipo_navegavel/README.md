@@ -105,9 +105,8 @@ Durante a revisão, passaram oito testes de módulos e uma suíte de navegador c
 ## Limitações conhecidas
 
 - Conclusões antigas não recebem histórico retroativo automaticamente.
-- Check-in rápido e orientações de Atendimentos não devem ser tratados como confirmação real de presença nem orientação clínica individual: há conteúdo fixo de demonstração nessa tela.
-- O Dashboard ainda usa datas e alguns conteúdos ilustrativos fixos.
-- As interfaces de Relatórios e Configurações possuem operações simuladas, mesmo existindo recursos correspondentes no backend.
+- Agendamentos confirmados não representam confirmação de chegada; check-in não foi implementado.
+- Backup e ações de privacidade pela interface permanecem pendentes.
 - O envio real de e-mail, algumas ações de privacidade, a navegação completa no celular e ajustes de largura permanecem pendentes.
 - A atualização deste frontend deve acompanhar a do backend: o cadastro inicial envia o primeiro pet dentro de `/auth/cadastro`.
 
@@ -134,3 +133,21 @@ Os testes com API simulada exercitam falha de gravação sem alterar dados reais
 Em Clientes & Pets → Novo cliente + pet, informe a senha de acesso e sua confirmação antes de avançar para o pet. A senha exige de 8 a 72 caracteres, com ao menos uma letra e um número. A confirmação é verificada apenas na interface; a senha é enviada à API para gerar o hash bcrypt, sem persistência no navegador.
 
 Para conferir: cadastre pelo gestor, saia da conta, abra o login de Cliente e entre com o e-mail e a senha definidos. Confira o primeiro pet e recarregue. Senha ausente/inválida ou confirmação diferente devem impedir o avanço. O ajuste não define senhas para clientes cadastrados anteriormente.
+
+## Ajustes de gestão e operações
+
+- Dashboard consulta indicadores no servidor ao abrir e pelo botão Atualizar painel. O gráfico utiliza os últimos sete dias; os serviços mais realizados consideram todo o histórico de atendimentos concluídos.
+- Configurações carrega a unidade real e salva os campos editáveis na API. CNPJ e fuso são informativos. Controles simulados de push, backup e múltiplas unidades foram retirados dessa tela.
+- Relatórios consulta uma prévia dos quatro tipos e baixa PDF/CSV reais. O período inválido é rejeitado; a posição de estoque é atual e não depende do período. Alterar filtros descarta a prévia anterior.
+- Clientes & Pets usa os nomes Inativar/Reativar. A reativação de um cliente não reativa todos os seus pets: selecione cada um na aba Pets. Colaboradores consultam cadastros, sem autorização para inativá-los.
+- Atendimentos mostra observações de saúde cadastradas dos pets, sem recomendações clínicas fixas ou indicação falsa de presença.
+
+Verificação manual:
+
+1. Confira o Dashboard, registre uma venda e use Atualizar painel; o valor líquido deve aparecer no faturamento do dia.
+2. Altere o nome da unidade em Configurações, salve e recarregue. Restaure o valor original depois de conferir.
+3. Em Relatórios, consulte os quatro tipos, teste um período sem registros e baixe PDF e CSV. Confira o conteúdo e o histórico após recarregar.
+4. Inative um cliente de teste como gestor; o acesso dele deve ser bloqueado. Reative o tutor e, separadamente, o pet desejado. O histórico deve permanecer.
+5. Entre como colaborador e confira a consulta de clientes e as observações dos pets na data dos atendimentos.
+
+Os testes de exportação também verificam erros da API e descarte de arquivos de uma sessão encerrada. Não execute integrações que gravam dados no banco de trabalho.
