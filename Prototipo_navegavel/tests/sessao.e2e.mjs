@@ -78,6 +78,7 @@ test('sessões e redefinição no navegador real com API simulada', { timeout: 6
     if (caminho === '/auth/recuperar-senha') {
       return responder({ enviado: true, ...(demonstracao ? { token: 'token-de-teste-comprido' } : {}) })
     }
+    if (caminho === '/agendamentos/901/concluir') return responder({ erro: 'Falha ao gravar o histórico.' }, 500)
     if (caminho === '/agendamentos') {
       const de = url.searchParams.get('de')
       if (falharAgenda) return responder({ erro: 'Consulta da agenda indisponível. Tente novamente.' }, 500)
@@ -225,6 +226,15 @@ test('sessões e redefinição no navegador real com API simulada', { timeout: 6
   })
   await page.waitForFunction(() => document.querySelector('tbody')?.innerText.includes('09:30'))
   assert.equal(await page.evaluate(() => document.querySelector('.page-head .sub').textContent.includes('04/01/2027')), true)
+  // Falha de gravação mantém modal, observação e status confirmado.
+  await page.evaluate(() => document.querySelector('tr[data-agendamento-id="901"] button').click())
+  await page.waitForSelector('.modal textarea')
+  await page.type('.modal textarea', 'Observação preservada em caso de falha')
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent.includes('Concluir e registrar')).click())
+  await page.waitForFunction(() => document.querySelector('.modal [role="alert"]')?.textContent.includes('Falha ao gravar o histórico'))
+  assert.equal(await page.$eval('.modal textarea', e => e.value), 'Observação preservada em caso de falha')
+  assert.match(await page.$eval('tr[data-agendamento-id="901"]', e => e.innerText), /confirmado/)
+  await page.evaluate(() => [...document.querySelectorAll('.modal button')].find(b => b.textContent === 'Voltar').click())
   await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.includes('Próximo dia')).click())
   await page.waitForFunction(() => document.body.innerText.includes('Nenhum atendimento nesta data'))
   assert.equal(await page.$eval('input[aria-label="Data dos atendimentos"]', i => i.value), '2027-01-05')

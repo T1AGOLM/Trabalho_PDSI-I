@@ -1,3 +1,5 @@
+import type { Agendamento } from './types'
+
 // ===== Cliente da API PetPlus =====
 //
 // Ponte única entre a interface e o backend. Nada mais no front fala com a
@@ -240,6 +242,7 @@ export const auth = {
     telefone?: string
     endereco?: string
     consentimento: boolean
+    pet?: { nome: string; especie: string; raca?: string; porte?: string; idade?: number; observacoesSaude?: string }
   }) =>
     requisitar<{ usuario: UsuarioLogado }>('/auth/cadastro', {
       metodo: 'POST',
@@ -287,7 +290,7 @@ export const clientes = {
     endereco?: string
     senha?: string
     consentimento?: boolean
-    pet?: { nome: string; especie?: string; raca?: string; porte?: string; idade?: number; observacoesSaude?: string }
+      pet?: { nome: string; especie?: string; raca?: string; porte?: string; idade?: number; observacoesSaude?: string }
   }) => requisitar<any>('/clientes', { metodo: 'POST', corpo: dados }),
 
   atualizar: (id: number, dados: Record<string, unknown>) =>
@@ -478,7 +481,7 @@ export const agendamentos = {
   cancelar: (id: number, motivo?: string) =>
     requisitar<any>(`/agendamentos/${id}/cancelar`, { metodo: 'PATCH', corpo: { motivo } }),
 
-  concluir: (id: number) => requisitar<any>(`/agendamentos/${id}/concluir`, { metodo: 'PATCH' }),
+  concluir: (id: number, observacao?: string) => requisitar<Agendamento>(`/agendamentos/${id}/concluir`, { metodo: 'PATCH', corpo: { observacao } }),
 }
 
 export const bloqueios = {

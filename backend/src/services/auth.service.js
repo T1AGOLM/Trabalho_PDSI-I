@@ -66,7 +66,7 @@ const usuarioResumo = (u) => ({
  * Cadastro público de tutor (RF01/RF02 — tela "Criar conta de cliente").
  * Exige consentimento LGPD explícito (RNF11).
  */
-export async function cadastrarCliente({ nome, email, telefone, senha, endereco, consentimento, ip, userAgent }) {
+export async function cadastrarCliente({ nome, email, telefone, senha, endereco, consentimento, pet, ip, userAgent }) {
   if (consentimento !== true) {
     throw new ErroDeNegocio(
       'É necessário autorizar o uso dos seus dados e dos dados de saúde do pet (LGPD).',
@@ -84,7 +84,7 @@ export async function cadastrarCliente({ nome, email, telefone, senha, endereco,
     throw new ErroDeNegocio('Nenhuma unidade cadastrada.', { status: 503, codigo: 'SEM_UNIDADE' })
   }
 
-  const usuario = await withTransaction({ tenantId: petshopId }, async (db) => {
+  return withTransaction({ tenantId: petshopId }, async (db) => {
     const { rows } = await db.query(
       `INSERT INTO usuario (petshop_id, perfil, nome, email, telefone, senha_hash, consent_lgpd, consent_em)
        VALUES ($1, 'CLIENTE', $2, $3, $4, $5, true, now())
@@ -96,11 +96,19 @@ export async function cadastrarCliente({ nome, email, telefone, senha, endereco,
        VALUES ($1, $2, $3, 0)`,
       [rows[0].id, petshopId, endereco ?? null],
     )
-    return rows[0]
+    const usuario = rows[0]
+    if (pet) {
+      await db.query(
+        `INSERT INTO pet (petshop_id, cliente_id, nome, especie, raca, porte, idade, observacoes_saude)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [petshopId, usuario.id, pet.nome, pet.especie, pet.raca ?? null, pet.porte ?? null,
+         pet.idade ?? null, pet.observacoesSaude ?? null],
+      )
+    }
+    // Conta, primeiro pet e sessão só existem se todas as gravações concluírem.
+    const sessao = await criarSessao({ usuario, ip, userAgent }, db)
+    return { ...sessao, usuario: usuarioResumo(usuario) }
   })
-
-  const sessao = await criarSessao({ usuario, ip, userAgent })
-  return { ...sessao, usuario: usuarioResumo(usuario) }
 }
 
 /**

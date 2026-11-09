@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { db } from '../../data'
+import React, { useState, useEffect } from 'react'
+import { db, sincronizar } from '../../data'
 import { fmtDate } from '../../utils'
 import { EmptyState } from '../../ui'
 import { useNav, useMeuId } from '../../shell'
@@ -18,12 +18,25 @@ export default function CliHistorico() {
   const [petId, setPetId] = useState(meusPets[0]?.id ?? 0)
   const pet = meusPets.find(p => p.id === petId)
 
-  const regs = db.registrosSaude.filter(r => r.petId === petId).sort((a, b) => b.data.localeCompare(a.data))
+  const [registros, setRegistros] = useState([...db.registrosSaude])
+  const [erroConsulta, setErroConsulta] = useState('')
+  useEffect(() => {
+    let atual = true
+    void sincronizar('registrosSaude').then(ok => {
+      if (!atual) return
+      if (ok) setRegistros([...db.registrosSaude])
+      else setErroConsulta('Não foi possível atualizar o histórico. Recarregue a página para tentar novamente.')
+    })
+    return () => { atual = false }
+  }, [])
+
+  const regs = registros.filter(r => r.petId === petId).sort((a, b) => b.data.localeCompare(a.data))
 
   const proximaVacina = regs.find(r => r.tipo === 'vacina')
 
   return (
     <div>
+      {erroConsulta && <div role="alert" className="alert danger">{erroConsulta}</div>}
       <div className="page-head">
         <div>
           <h1>Histórico de Saúde</h1>

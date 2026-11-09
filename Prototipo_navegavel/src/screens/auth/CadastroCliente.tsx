@@ -1,26 +1,27 @@
 import React, { useState } from 'react'
 import { useNav } from '../../shell'
 import { useToast, Field } from '../../ui'
-import { api, ApiError } from '../../api'
+import { ApiError } from '../../api'
 import type { Sessao } from '../../data'
 
 /**
  * Autoatendimento do tutor (UC03/RF01/RF02).
  *
  * Em duas etapas: os dados da conta (que viram `usuario` + `cliente`) e o
- * primeiro pet. As duas escritas são reais: a segunda usa o id da sessão
- * recém-criada, então o pet fica no nome do tutor que acabou de se cadastrar.
+ * primeiro pet. Conta e primeiro pet são enviados juntos e gravados na mesma transação.
  */
 export default function CadastroCliente({ onCadastrar }: {
   onCadastrar: (dados: {
     nome: string; email: string; senha: string
     telefone?: string; endereco?: string; consentimento: boolean
+    pet: { nome: string; especie: string; raca?: string; porte?: string; idade?: number; observacoesSaude?: string }
   }) => Promise<Sessao>
 }) {
   const nav = useNav()
   const toast = useToast()
   const [etapa, setEtapa] = useState(1)
   const [enviando, setEnviando] = useState(false)
+  const envioPendente = React.useRef(false)
   const [nome, setNome] = useState('')
   const [email, setEmail] = useState('')
   const [telefone, setTelefone] = useState('')
@@ -57,30 +58,25 @@ export default function CadastroCliente({ onCadastrar }: {
   }
 
   const concluir = async () => {
-    if (!petNome) {
+    if (envioPendente.current) return
+    if (!petNome.trim()) {
       setErro('Informe o nome do pet (você pode cadastrar outros depois).')
       return
     }
     setErro('')
+    envioPendente.current = true
     setEnviando(true)
     try {
       // Cadastro real: a senha é enviada uma única vez e o backend guarda
       // apenas o hash bcrypt (RNF02). O consentimento LGPD é obrigatório e
       // é gravado com data e hora (RNF11). A resposta já autentica a sessão.
-      const sessao = await onCadastrar({
-        nome, email, telefone, endereco, senha,
-        consentimento: consent,
-      })
-
-      // O pet do passo 2 vai para o banco no nome do tutor recém-criado.
-      await api.pets.criar({
-        clienteId: sessao.id,
-        nome: petNome,
-        especie: petEspecie,
-        raca: petRaca || 'SRD',
-        porte: petPorte,
-        ...(petIdade ? { idade: Number(petIdade) } : {}),
-        ...(petObs ? { observacoesSaude: petObs } : {}),
+      await onCadastrar({
+        nome, email, telefone, endereco, senha, consentimento: consent,
+        pet: {
+          nome: petNome.trim(), especie: petEspecie, raca: petRaca || 'SRD', porte: petPorte,
+          ...(petIdade !== '' ? { idade: Number(petIdade) } : {}),
+          ...(petObs ? { observacoesSaude: petObs } : {}),
+        },
       })
 
       toast(`Bem-vindo(a), ${nome.split(' ')[0]}! Seu cadastro e o de ${petNome} já estão no banco.`, 'ok')
@@ -94,6 +90,7 @@ export default function CadastroCliente({ onCadastrar }: {
         setErro('Não foi possível concluir o cadastro. Tente novamente.')
       }
     } finally {
+      envioPendente.current = false
       setEnviando(false)
     }
   }
@@ -182,7 +179,7 @@ export default function CadastroCliente({ onCadastrar }: {
                   </Field>
                 </div>
                 <div className="form-actions">
-                  <button className="btn btn-outline" onClick={() => setEtapa(1)}>← Voltar</button>
+                  <button className="btn btn-outline" disabled={enviando} onClick={() => setEtapa(1)}>← Voltar</button>
                   <button className="btn btn-primary" onClick={concluir} disabled={enviando}>
                     {enviando ? 'Gravando no banco…' : 'Concluir cadastro ✓'}
                   </button>

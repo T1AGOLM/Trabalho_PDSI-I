@@ -100,7 +100,7 @@ Resultados registrados durante a revisão de 09/11/2026. Não representam uma ex
 
 | Verificação | Resultado registrado | Ambiente e limite |
 |---|---|---|
-| Unitários do backend | 80 aprovados | Incluem dublês de banco e verificações HTTP. |
+| Unitários do backend | 94 aprovados | Incluem validação HTTP e 7 casos de transação dos fluxos essenciais com falhas injetadas. |
 | Módulos do frontend | 8 aprovados | Código real com rede simulada. |
 | Navegador com API simulada | 1 suíte aprovada | Inclui login manual, troca de conta, campos nulos e consulta por data. |
 | Segurança com PostgreSQL | 6 casos aprovados | Cópia exclusiva de testes; inclui reaplicação da migração. |
@@ -121,14 +121,23 @@ As verificações com dublês não substituem as integrações com PostgreSQL. C
 
 Os artefatos de modelagem devem ser conferidos contra as migrações posteriores; quantidades históricas de tabelas não são apresentadas aqui como inventário atual certificado.
 
+## Ajustes dos fluxos essenciais
+
+- **Atendimentos:** o botão de conclusão chama a API e salva status, registro do histórico e pontos em uma única transação. A observação é opcional, limitada a 2.000 caracteres, e fica no registro do pet. Uma conclusão repetida é recusada sem duplicar histórico ou crédito.
+- **Histórico:** as telas de cliente e colaborador consultam os registros ao abrir, incluindo conclusões realizadas em outra sessão.
+- **Cadastro pelo gestor:** Novo cliente + pet exige senha de acesso e confirmação na interface. A senha enviada é validada no backend e armazenada como hash bcrypt. O cliente entra com o e-mail cadastrado e essa senha. Contas antigas não são alteradas; a definição de senha dessas contas continua pelo fluxo de recuperação.
+- **Cadastro inicial:** conta, primeiro pet e sessão são gravados juntos por `POST /api/auth/cadastro`. A área do cliente só é carregada depois da resposta; uma falha na gravação reverte a transação. O campo `pet` continua opcional para outros consumidores da API.
+- **Compatibilidade:** nenhuma migração ou dependência nova. A atualização do frontend deve acompanhar a do backend para o novo envio do primeiro pet.
+- **Validação em 09/11/2026:** 94 unitários do backend, 8 do frontend, 1 cenário de navegador com API simulada (incluindo falha de conclusão), 6 integrações de sessões e 1 cenário de navegador com API/PostgreSQL real aprovados. Este último verificou cadastro inicial, conclusão, observação nos históricos do colaborador e tutor e persistência após recarga. TypeScript e compilação Vite programática também aprovados. As integrações utilizaram a cópia exclusiva de testes; a reversão por falhas injetadas foi verificada com banco simulado.
+
 ## Limitações e pendências
 
 - O envio real de e-mail não está configurado; os transportes locais não entregam o link de recuperação.
-- Na tela separada Atendimentos, a conclusão com observações/histórico ainda é local e incompleta. A consulta por data foi corrigida; a conclusão persistente citada acima é a de Minha Agenda.
+- Check-in rápido e orientações fixas da tela Atendimentos continuam demonstrativos; não representam presença confirmada nem orientação clínica individual.
 - O Dashboard mantém datas e alguns conteúdos ilustrativos do protótipo.
 - Configurações, Relatórios e ações de privacidade possuem operações simuladas na interface; a existência de endpoints na API não implica integração completa da tela.
 - A navegação e a responsividade no celular precisam de revisão adicional.
-- O cadastro inicial de tutor/pet precisa de revisão da sincronização: a navegação pode ocorrer antes de terminar a criação do pet.
+- Atendimentos concluídos antes deste ajuste não recebem registros de saúde retroativos automaticamente.
 
 ## Cuidados com dados e versionamento
 

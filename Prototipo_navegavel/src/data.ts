@@ -108,6 +108,7 @@ export async function cadastrar(dados: {
   telefone?: string
   endereco?: string
   consentimento: boolean
+  pet?: { nome: string; especie: string; raca?: string; porte?: string; idade?: number; observacoesSaude?: string }
 }): Promise<Sessao> {
   await encerramento
   limparSessaoLocal()

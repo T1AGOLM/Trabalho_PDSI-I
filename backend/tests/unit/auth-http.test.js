@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import express from 'express'
 import cookieParser from 'cookie-parser'
+import { cadastrosRoutes } from '../../src/routes/cadastros.routes.js'
+import { assinarToken } from '../../src/middleware/auth.js'
 import { authRoutes } from '../../src/routes/auth.routes.js'
 import { tratadorDeErros } from '../../src/middleware/errors.js'
 import { cadastrarCliente } from '../../src/services/auth.service.js'
@@ -12,6 +14,7 @@ async function iniciar(t) {
   const app = express()
   app.use(express.json(), cookieParser())
   app.use('/auth', authRoutes)
+  app.use('/api', cadastrosRoutes)
   app.use(tratadorDeErros)
   const server = app.listen(0, '127.0.0.1')
   await new Promise(resolve => server.once('listening', resolve))
@@ -76,3 +79,31 @@ test('logout limpa ambos os cookies mesmo quando o banco falha', async t => {
   assert.match(cookies, /petplus_refresh=;/)
   assert.match(cookies, /Expires=Thu, 01 Jan 1970/)
 })
+
+for (const pet of [{ nome: '   ' }, { nome: 'Teste', idade: -1 }, { nome: 'Teste', idade: 1.5 }, { nome: 'Teste', observacoesSaude: 'x'.repeat(2001) }]) {
+  test('cadastro HTTP rejeita pet inválido antes de gravar a conta: '+JSON.stringify(pet).slice(0, 70), async t => {
+    const base = await iniciar(t)
+    t.mock.method(pool, 'connect', () => { assert.fail('Validação deve ocorrer antes da transação.') })
+    const res = await fetch(base + '/cadastro', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome: 'Tutor Teste', email: 'teste@example.com', senha: 'SenhaTeste123', consentimento: true, pet }),
+    })
+    assert.equal(res.status, 422)
+  })
+}
+
+for (const senhaInvalida of ['12345678', 'abcdefgh', 'Abc123']) {
+  test('cadastro administrativo rejeita senha fraca: '+senhaInvalida, async t => {
+    const base = await iniciar(t)
+    const gestor = { id: 1, petshop_id: 1, perfil: 'GESTOR', ativo: true }
+    t.mock.method(pool, 'connect', async () => ({ release() {}, async query(sql) {
+      assert.ok(!sql.includes('INSERT INTO'), 'Senha inválida não deve criar cliente.')
+      return { rows: sql.includes('JOIN refresh_token') ? [gestor] : [] }
+    } }))
+    const res = await fetch(base.replace('/auth', '/api/clientes'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer '+assinarToken(gestor, 1) },
+      body: JSON.stringify({ nome: 'Cliente Teste', email: 'teste@example.com', senha: senhaInvalida }),
+    })
+    assert.equal(res.status, 422)
+  })
+}

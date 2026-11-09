@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { db, sincronizar } from '../../data'
 import { api, ApiError } from '../../api'
 import { fmtDate, petLabel, todayISO } from '../../utils'
@@ -22,6 +22,17 @@ export default function ColabHistorico() {
   const [desc, setDesc] = useState('')
   const [enviando, setEnviando] = useState(false)
 
+  const [erroConsulta, setErroConsulta] = useState('')
+  useEffect(() => {
+    let atual = true
+    void sincronizar('registrosSaude').then(ok => {
+      if (!atual) return
+      if (ok) setRegs([...db.registrosSaude])
+      else setErroConsulta('Não foi possível atualizar o histórico. Recarregue a página para tentar novamente.')
+    })
+    return () => { atual = false }
+  }, [])
+
   const doPet = regs
     .filter(r => r.petId === petId)
     .sort((a, b) => b.data.localeCompare(a.data))
@@ -30,6 +41,7 @@ export default function ColabHistorico() {
 
   return (
     <div>
+      {erroConsulta && <div role="alert" className="alert danger">{erroConsulta}</div>}
       <div className="page-head">
         <div>
           <h1>Histórico do Pet</h1>

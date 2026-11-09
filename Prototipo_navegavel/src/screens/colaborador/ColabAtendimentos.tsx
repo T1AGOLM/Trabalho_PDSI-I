@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { db } from '../../data'
-import { fmtTime, fmtDateTime, petLabel, servicoLabel, clienteNome, colaboradorNome, getPet } from '../../utils'
+import { sincronizar } from '../../data'
+import { fmtTime, fmtDateTime, servicoLabel, clienteNome, colaboradorNome, getPet } from '../../utils'
 import { Modal, useToast, EmptyState, Field } from '../../ui'
 import type { Agendamento } from '../../types'
 import { api, ApiError } from '../../api'
@@ -24,7 +24,27 @@ export default function ColabAtendimentos() {
   }, [data, versao])
   const [concluir, setConcluir] = useState<Agendamento | null>(null)
   const [obs, setObs] = useState('')
-  const [produtosUsados, setProdutosUsados] = useState<string[]>([])
+  const [salvando, setSalvando] = useState(false)
+  const [erroConclusao, setErroConclusao] = useState('')
+  const salvamento = React.useRef(false)
+  const finalizar = async () => {
+    if (!concluir || salvamento.current) return
+    salvamento.current = true
+    setSalvando(true); setErroConclusao('')
+    try {
+      const atualizado = await api.agendamentos.concluir(concluir.id, obs.trim())
+      setAgs(atuais => atuais.map(a => a.id === atualizado.id ? atualizado : a))
+      setConcluir(null)
+      toast('Atendimento concluído e histórico gravado.', 'ok')
+      if (!await sincronizar('registrosSaude', 'agendamentos')) {
+        toast('Salvo no banco. Recarregue a página para atualizar as outras consultas.', 'err')
+      }
+    } catch (err) {
+      setErroConclusao(err instanceof ApiError ? err.mensagem : 'Não foi possível concluir. Verifique a conexão e atualize a lista antes de tentar novamente.')
+    } finally {
+      salvamento.current = false; setSalvando(false)
+    }
+  }
 
   const enfileirados = ags
     .filter(a => a.dataHora.startsWith(data))
@@ -58,7 +78,7 @@ export default function ColabAtendimentos() {
                 {enfileirados.map(a => {
                   const pet = getPet(a.petId)
                   return (
-                    <tr key={a.id}>
+                    <tr key={a.id} data-agendamento-id={a.id}>
                       <td className="bold">{fmtTime(a.dataHora)}</td>
                       <td><div className="bold">{pet?.nome}</div><div className="tiny muted">{pet?.raca}</div></td>
                       <td>{servicoLabel(a.servicoId)}</td>
@@ -67,7 +87,7 @@ export default function ColabAtendimentos() {
                       <td><span className={`badge ${a.status === 'confirmado' ? 'badge-teal' : a.status === 'concluído' ? 'badge-green' : 'badge-gray'}`}>{a.status}</span></td>
                       <td>
                         <div className="actions">
-                          {a.status === 'confirmado' && <button className="btn btn-primary btn-sm" onClick={() => { setConcluir(a); setObs('') }}>✓ Concluir</button>}
+                          {a.status === 'confirmado' && <button className="btn btn-primary btn-sm" onClick={() => { setConcluir(a); setObs(''); setErroConclusao('') }}>✓ Concluir</button>}
                           {a.status === 'concluído' && <span className="tiny muted">finalizado</span>}
                         </div>
                       </td>
@@ -100,22 +120,19 @@ export default function ColabAtendimentos() {
       </div>
 
       {concluir && (
-        <Modal title={`Concluir atendimento — ${getPet(concluir.petId)?.nome}`} onClose={() => setConcluir(null)}
+        <Modal title={`Concluir atendimento — ${getPet(concluir.petId)?.nome}`} onClose={() => { if (!salvando) setConcluir(null) }}
           footer={
             <>
-              <button className="btn btn-outline" onClick={() => setConcluir(null)}>Voltar</button>
-              <button className="btn btn-primary" onClick={() => {
-                setAgs(as => as.map(a => a.id === concluir.id ? { ...a, status: 'concluído' } : a))
-                setConcluir(null)
-                toast('Atendimento concluído! Registro adicionado ao histórico do pet (UC13).', 'ok')
-              }}>✓ Concluir e registrar no histórico</button>
+              <button className="btn btn-outline" disabled={salvando} onClick={() => setConcluir(null)}>Voltar</button>
+              <button className="btn btn-primary" disabled={salvando} onClick={() => void finalizar()}>{salvando ? 'Salvando…' : '✓ Concluir e registrar no histórico'}</button>
             </>
           }>
           <div className="kv"><span className="k">Serviço</span><span className="v">{servicoLabel(concluir.servicoId)}</span></div>
           <div className="kv"><span className="k">Tutor</span><span className="v">{clienteNome(concluir.clienteId)}</span></div>
           <div className="kv"><span className="k">Horário</span><span className="v">{fmtDateTime(concluir.dataHora)}</span></div>
+          {erroConclusao && <div role="alert" className="alert danger">{erroConclusao}</div>}
           <Field label="Observação para o histórico do pet" full>
-            <textarea placeholder="Ex.: Banho realizado com shampoo hiperalergênico; pelagem sadia." value={obs} onChange={e => setObs(e.target.value)} />
+            <textarea maxLength={2000} disabled={salvando} placeholder="Ex.: Banho realizado com shampoo hiperalergênico; pelagem sadia." value={obs} onChange={e => setObs(e.target.value)} />
           </Field>
           <div className="alert info mt-12" style={{ marginBottom: 0 }}>O registro aparece na linha do tempo do pet e fica visível para o tutor online (RF21).</div>
         </Modal>

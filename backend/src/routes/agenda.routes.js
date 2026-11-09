@@ -148,8 +148,8 @@ agendaRoutes.patch('/agendamentos/:id/cancelar', autenticar,
 
 /** PATCH /agendamentos/:id/concluir — só a equipe conclui (RF17). */
 agendaRoutes.patch('/agendamentos/:id/concluir', autenticar, exigirPerfil('GESTOR', 'COLABORADOR'),
-  validar({ params: idParam }), rota(async (req, res) => {
-    const concluido = await agenda.concluir(contexto(req), req.paramsValidos.id)
+  validar({ params: idParam, corpo: z.object({ observacao: z.string().trim().max(2000).optional() }) }), rota(async (req, res) => {
+    const concluido = await agenda.concluir(contexto(req), req.paramsValidos.id, req.body.observacao)
     if (!concluido) throw new ErroNaoEncontrado('Agendamento confirmado')
     res.json(concluido)
   }))

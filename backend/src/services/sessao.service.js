@@ -47,13 +47,14 @@ export const segundosDoAccessToken = () => Math.floor(duracaoEmMs(config.auth.jw
 
 /**
  * Cria uma sessão nova (login/cadastro) e devolve o par de tokens.
- * A gravação do refresh acontece dentro da transação do tenant.
+ * Aceita a conexão do cadastro para incluir a sessão na mesma transação;
+ * sem conexão, abre uma transação própria no tenant.
  */
-export async function criarSessao({ usuario, ip, userAgent }) {
+export async function criarSessao({ usuario, ip, userAgent }, conexao) {
   const refreshToken = novoToken()
   const expiraEm = new Date(Date.now() + duracaoEmMs(config.auth.jwtRefreshExpiresIn))
 
-  const criado = await withTransaction({ tenantId: usuario.petshop_id, usuarioId: usuario.id }, async (db) => {
+  const gravar = async (db) => {
     const { rows } = await db.query(
       `INSERT INTO refresh_token (petshop_id, usuario_id, token_hash, expira_em, user_agent, ip)
        VALUES ($1, $2, $3, $4, $5, $6)
@@ -61,7 +62,9 @@ export async function criarSessao({ usuario, ip, userAgent }) {
       [usuario.petshop_id, usuario.id, hashDoToken(refreshToken), expiraEm, userAgent ?? null, ip ?? null],
     )
     return rows[0]
-  })
+  }
+  const criado = conexao ? await gravar(conexao)
+    : await withTransaction({ tenantId: usuario.petshop_id, usuarioId: usuario.id }, gravar)
 
   return {
     token: assinarToken(usuario, criado.id),

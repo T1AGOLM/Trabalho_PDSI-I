@@ -104,15 +104,33 @@ Durante a revisão, passaram oito testes de módulos e uma suíte de navegador c
 
 ## Limitações conhecidas
 
-- Minha Agenda grava conclusão/cancelamento; o formulário de concluir com observação na tela Atendimentos ainda não registra o histórico pela API.
+- Conclusões antigas não recebem histórico retroativo automaticamente.
 - Check-in rápido e orientações de Atendimentos não devem ser tratados como confirmação real de presença nem orientação clínica individual: há conteúdo fixo de demonstração nessa tela.
 - O Dashboard ainda usa datas e alguns conteúdos ilustrativos fixos.
 - As interfaces de Relatórios e Configurações possuem operações simuladas, mesmo existindo recursos correspondentes no backend.
 - O envio real de e-mail, algumas ações de privacidade, a navegação completa no celular e ajustes de largura permanecem pendentes.
-- A primeira carga após cadastro de tutor/pet requer revisão da ordem de criação e sincronização.
+- A atualização deste frontend deve acompanhar a do backend: o cadastro inicial envia o primeiro pet dentro de `/auth/cadastro`.
 
 ## Documentação relacionada
 
 - [Visão geral e ajustes consolidados](../README.md).
 - [API, autenticação e testes integrados](../backend/README.md).
 - [Modelo e migrações do banco](../Banco_de_Dados/README.md).
+## Ajustes dos fluxos essenciais
+
+Atendimentos grava conclusão e observação pela API, bloqueia cliques repetidos e mantém o modal e o texto quando a gravação falha. As telas de histórico atualizam os registros ao abrir. O cadastro envia conta e primeiro pet juntos; a primeira carga ocorre depois da gravação no backend.
+
+Validação manual sugerida:
+
+1. Crie um cliente com um pet e confirme que ele aparece em Meus Pets sem precisar sair e entrar novamente. Recarregue a página e confira a persistência.
+2. Em Atendimentos, escolha a data da reserva, clique em Concluir, escreva uma observação e confirme.
+3. Recarregue e confira o status finalizado. Abra Histórico do Pet, selecione o mesmo pet e procure a observação. Confira também no login do tutor.
+4. Para simular falha de rede, abra o modal, interrompa a API e tente concluir: o texto deve permanecer e nenhum sucesso deve ser apresentado. Reinicie a API e atualize a lista antes de tentar novamente.
+
+Os testes com API simulada exercitam falha de gravação sem alterar dados reais. Os testes integrados exigem cópia exclusiva do banco.
+
+### Acesso do cliente cadastrado pelo gestor
+
+Em Clientes & Pets → Novo cliente + pet, informe a senha de acesso e sua confirmação antes de avançar para o pet. A senha exige de 8 a 72 caracteres, com ao menos uma letra e um número. A confirmação é verificada apenas na interface; a senha é enviada à API para gerar o hash bcrypt, sem persistência no navegador.
+
+Para conferir: cadastre pelo gestor, saia da conta, abra o login de Cliente e entre com o e-mail e a senha definidos. Confira o primeiro pet e recarregue. Senha ausente/inválida ou confirmação diferente devem impedir o avanço. O ajuste não define senhas para clientes cadastrados anteriormente.

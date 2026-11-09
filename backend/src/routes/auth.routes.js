@@ -68,6 +68,15 @@ authRoutes.post(
       telefone: schemaTelefone.optional(),
       endereco: z.string().trim().max(255).optional(),
       consentimento: z.literal(true),
+      // Opcional para manter compatibilidade com clientes que cadastram só o tutor.
+      pet: z.object({
+        nome: z.string().trim().min(1).max(100),
+        especie: z.string().trim().max(40).default('Cachorro'),
+        raca: z.string().trim().max(60).optional(),
+        porte: z.string().trim().max(20).optional(),
+        idade: z.number().int().min(0).max(40).optional(),
+        observacoesSaude: z.string().trim().max(2000).optional(),
+      }).optional(),
     }),
   }),
   rota(async (req, res) => {

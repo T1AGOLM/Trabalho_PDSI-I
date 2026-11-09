@@ -167,11 +167,23 @@ As variáveis do terminal do teste não reconfiguram a API que já está rodando
 | `npm run verificar` | Executa unitários, reset e suítes integradas; recria o banco e exige ambiente descartável. |
 | `npm run reset` | Recria o esquema e carrega dados de demonstração. Não é comando de inicialização diária. |
 
-Os resultados observados estão no [registro de validação do projeto](../README.md#validação-dos-ajustes). Não foram reexecutados testes de aplicação para a reorganização exclusiva desta documentação.
+Os resultados observados estão no [registro de validação do projeto](../README.md#validação-dos-ajustes). A validação mais recente dos fluxos essenciais inclui testes de aplicação, com resultados e limites registrados nesse guia.
 
 ## Limitações
 
 - Envio real de e-mail não implementado; a fila e o agendador existentes não equivalem a entrega por provedor externo.
 - Existem endpoints de exportação e configuração na API, mas as telas correspondentes ainda têm operações simuladas.
 - A API possui paginação, rate limiting, renovação de sessão, logs estruturados e testes unitários; essas funcionalidades não devem constar como ausentes em uma lista de evolução.
-- O fluxo completo da tela Atendimentos, a revisão do Dashboard, da interface móvel e do cadastro inicial de tutor/pet permanecem documentados como pendências nos guias principal e de frontend.
+- Dashboard, interface móvel e conteúdo demonstrativo de check-in/orientações permanecem pendentes nos guias principal e de frontend.
+## Ajustes dos fluxos essenciais
+
+- `POST /auth/cadastro` aceita `pet` opcional com nome, espécie, raça, porte, idade e observações de saúde. O tutor é definido pela conta criada, nunca por um identificador enviado dentro de `pet`. Conta, cliente, pet e sessão são gravados na mesma transação.
+- `PATCH /agendamentos/:id/concluir` aceita `observacao` opcional (até 2.000 caracteres). Status, registro de saúde e pontos são gravados juntos. O registro utiliza a data local do agendamento e identifica o serviço e o número da reserva. Repetições retornam 404 sem duplicar o registro.
+- Não há migração nova nem preenchimento retroativo de históricos. As chamadas antigas de conclusão sem corpo continuam aceitas.
+- `tests/unit/fluxos-essenciais.test.js` injeta falhas de pet, sessão, histórico e pontos para verificar rollback; não conecta ao banco. A integração `tests/integration/agendas-navegador.test.js` também verifica cadastro inicial, conclusão pela tela Atendimentos, observação no histórico e persistência após recarga.
+
+### Senha no cadastro administrativo de cliente
+
+A interface de cadastro pelo gestor envia `senha` em `POST /clientes`. Quando informada, a API aplica o mesmo schema de senha do cadastro público (8 a 72 caracteres, letra e número) e armazena somente o hash bcrypt. A confirmação não é enviada nem retornada. Por compatibilidade, consumidores antigos da API ainda podem omitir a senha; essas contas dependem da recuperação para definir uma senha conhecida. O envio real de e-mail continua pendente.
+
+O teste de navegador com PostgreSQL também cobre cadastro pelo gestor, bloqueio de senha ausente/confirmação diferente e login do cliente criado com seu primeiro pet. Contas existentes não tiveram suas senhas alteradas.

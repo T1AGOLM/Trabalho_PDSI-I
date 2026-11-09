@@ -263,48 +263,66 @@ export default function Clientes() {
 function NovoClienteModal({ onClose, onCriar }: {
   onClose: () => void
   onCriar: (dados: {
-    cliente: { nome: string; email: string; telefone: string; endereco?: string }
+    cliente: { nome: string; email: string; telefone: string; endereco?: string; senha: string }
     pet: { nome: string; especie: string; raca: string; porte: string; idade: number; observacoesSaude?: string }
   }) => Promise<void>
 }) {
   const [enviando, setEnviando] = useState(false)
+  const envioPendente = React.useRef(false)
+  const [senha, setSenha] = useState('')
+  const [confirmacaoSenha, setConfirmacaoSenha] = useState('')
+  const senhaValida = senha.length >= 8 && senha.length <= 72 && /[A-Za-zÀ-ÿ]/.test(senha) && /\d/.test(senha)
+  const validarSenha = () => {
+    if (!senhaValida) return 'A senha deve ter de 8 a 72 caracteres, com ao menos uma letra e um número.'
+    if (senha !== confirmacaoSenha) return 'A confirmação da senha não confere.'
+    return ''
+  }
   const [etapa, setEtapa] = useState(1)
   const [nome, setNome] = useState(''); const [email, setEmail] = useState(''); const [telefone, setTelefone] = useState(''); const [endereco, setEndereco] = useState('')
   const [petNome, setPetNome] = useState(''); const [especie, setEspecie] = useState('Cachorro'); const [raca, setRaca] = useState(''); const [porte, setPorte] = useState('Pequeno'); const [idade, setIdade] = useState('1'); const [obs, setObs] = useState('')
   const [erro, setErro] = useState('')
 
   return (
-    <Modal title="Novo cliente + pet (UC03)" onClose={onClose} size="wide"
+    <Modal title="Novo cliente + pet (UC03)" onClose={() => { if (!envioPendente.current) onClose() }} size="wide"
       footer={
         etapa === 1
           ? <>
             <button className="btn btn-outline" onClick={onClose}>Cancelar</button>
             <button className="btn btn-primary" onClick={() => {
               if (!nome || !email.includes('@') || !telefone) { setErro('Preencha nome, e-mail e telefone.'); return }
+              const erroSenha = validarSenha()
+              if (erroSenha) { setErro(erroSenha); return }
               setErro(''); setEtapa(2)
             }}>Continuar para o pet →</button>
           </>
           : <>
-            <button className="btn btn-outline" onClick={() => setEtapa(1)}>← Voltar</button>
+            <button className="btn btn-outline" disabled={enviando} onClick={() => setEtapa(1)}>← Voltar</button>
             <button className="btn btn-primary" disabled={enviando} onClick={async () => {
-              if (!petNome) { setErro('Informe o nome do pet.'); return }
+              if (envioPendente.current) return
+              if (!petNome.trim()) { setErro('Informe o nome do pet.'); return }
+              const erroSenha = validarSenha()
+              if (erroSenha) { setErro(erroSenha); setEtapa(1); return }
               setErro('')
+              envioPendente.current = true
               setEnviando(true)
               try {
                 await onCriar({
-                  cliente: { nome, email, telefone, ...(endereco ? { endereco } : {}) },
+                  cliente: { nome, email, telefone, senha, ...(endereco ? { endereco } : {}) },
                   pet: {
                     nome: petNome, especie, raca: raca || 'SRD', porte,
                     idade: Number(idade) || 0, ...(obs ? { observacoesSaude: obs } : {}),
                   },
                 })
+              } catch (err) {
+                setErro(err instanceof ApiError ? err.mensagem : 'Não foi possível cadastrar. Verifique a conexão e tente novamente.')
               } finally {
+                envioPendente.current = false
                 setEnviando(false)
               }
             }}>✓ Cadastrar cliente e pet</button>
           </>
       }>
-      {erro && <div className="alert danger">{erro}</div>}
+      {erro && <div role="alert" className="alert danger">{erro}</div>}
       {etapa === 1 ? (
         <>
           <h3 className="mb-12" style={{ fontSize: 14 }}>Dados do tutor</h3>
@@ -313,7 +331,14 @@ function NovoClienteModal({ onClose, onCriar }: {
             <Field label="E-mail" required><input value={email} onChange={e => setEmail(e.target.value)} /></Field>
             <Field label="Telefone" required><input value={telefone} onChange={e => setTelefone(e.target.value)} /></Field>
             <Field label="Endereço"><input value={endereco} onChange={e => setEndereco(e.target.value)} /></Field>
+            <Field label="Senha de acesso" required>
+              <input aria-label="Senha de acesso do cliente" type="password" autoComplete="new-password" maxLength={72} value={senha} onChange={e => setSenha(e.target.value)} />
+            </Field>
+            <Field label="Confirmar senha" required>
+              <input aria-label="Confirmar senha do cliente" type="password" autoComplete="new-password" maxLength={72} value={confirmacaoSenha} onChange={e => setConfirmacaoSenha(e.target.value)} />
+            </Field>
           </div>
+          <div className="alert info mt-12">O cliente poderá entrar com este e-mail e a senha definida aqui. Use de 8 a 72 caracteres, com ao menos uma letra e um número.</div>
         </>
       ) : (
         <>
