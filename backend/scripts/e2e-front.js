@@ -69,6 +69,22 @@ async function autenticarComoGestor() {
   return r.token
 }
 
+/** O contrato atual devolve { dados, paginas }, não um array na raiz. */
+async function listarRecurso(recurso) {
+  const linhas = []
+  let paginas = 1
+  for (let pagina = 1; pagina <= paginas; pagina++) {
+    const resposta = await fetch(`${API}/${recurso}?limite=100&pagina=${pagina}`, {
+      headers: { Authorization: `Bearer ${antes.token}` },
+    })
+    const corpo = await resposta.json()
+    if (!resposta.ok || !Array.isArray(corpo.dados)) throw new Error(`Contrato inválido em ${recurso}: HTTP ${resposta.status}`)
+    linhas.push(...corpo.dados)
+    paginas = Number(corpo.paginas)
+  }
+  return linhas
+}
+
 /**
  * Clica num botão pelo texto e espera o React renderizar.
  * Busca o elemento com o texto mais exato possível, para não clicar no
@@ -143,9 +159,10 @@ try {
   await checar('login com senha correta entra no Dashboard',
     page.url().includes('dashboard'), `url: ${page.url()}`)
 
-  const tokenAposLogin = await page.evaluate(() => localStorage.getItem('petplus_token'))
-  await checar('um JWT foi emitido e guardado',
-    !!tokenAposLogin && tokenAposLogin.split('.').length === 3)
+  const cookiesAposLogin = await page.cookies()
+  await checar('sessão usa cookie HttpOnly sem token no localStorage',
+    cookiesAposLogin.some(c => c.name === 'petplus_token' && c.httpOnly)
+    && await page.evaluate(() => localStorage.getItem('petplus_token')) === null)
 
   // Token próprio do teste, para conferir o banco por fora do navegador.
   antes = { token: await autenticarComoGestor() }
@@ -198,6 +215,17 @@ try {
   await page.goto(`${FRONT}/#/agenda`, { waitUntil: 'networkidle2' })
   await dormir(1500)
 
+  // A agenda abre na semana atual; consulte explicitamente a semana da fixture.
+  const referenciaAgenda = (await listarRecurso('agendamentos')).find(a => a.status !== 'cancelado')?.dataHora.slice(0, 10)
+  if (!referenciaAgenda) throw new Error('A cópia de testes não contém reserva para validar a grade.')
+  await page.waitForSelector('input[aria-label="Data da agenda"]')
+  await page.evaluate(valor => {
+    const input = document.querySelector('input[aria-label="Data da agenda"]')
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, valor)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+  }, referenciaAgenda)
+  await page.waitForFunction(() => document.querySelectorAll('.agenda-ev').length > 0)
   const eventosAgenda = await page.evaluate(() => document.querySelectorAll('.agenda-ev').length)
   await checar('agenda exibe eventos vindos do banco', eventosAgenda > 0,
     `${eventosAgenda} eventos na grade`)
@@ -219,26 +247,25 @@ try {
   // slot REALMENTE livre, senão o RN01 (que o banco faz questão de
   // barrar) reprovaria a criação — e o teste estaria medindo a coisa
   // errada.
-  const listaAtual = await (await fetch(`${API}/agendamentos`, {
-    headers: { Authorization: `Bearer ${antes.token}` },
-  })).json()
-  const ocupados = new Set(
-    listaAtual
-      .filter((a) => a.status !== 'cancelado')
-      .map((a) => `${a.dataHora}`),
-  )
-
-  // Horários dentro da janela de TODOS os colaboradores do seed
-  // (o mais restrito é Seg–Sex 10h–19h, da Camila). Assim o teste não
-  // depende de qual profissional o formulário escolhe por padrão.
-  const candidatos = []
-  for (const dia of [2, 3, 4, 5, 6]) {          // 02/11 a 06/11 = seg a sex
-    for (const hora of ['11:00', '14:00', '16:00']) {
-      candidatos.push({ data: `2026-11-${String(dia).padStart(2, '0')}`, hora })
-    }
+  const escolha = await page.evaluate(() => {
+    const selects = [...document.querySelectorAll('.modal select')]
+    return { servicoId: Number(selects[1].value), colaboradores: [...selects[2].options].filter(o => !o.disabled && Number(o.value)>0).map(o => Number(o.value)), horas: [...selects[3].options].map(o => o.value) }
+  })
+  const servico = (await listarRecurso('servicos')).find(s => s.id === escolha.servicoId)
+  let slot = null
+  for (const colaboradorId of escolha.colaboradores) {
+   for (let deslocamento = 1; deslocamento <= 14 && !slot; deslocamento++) {
+    const dia = new Date()
+    dia.setDate(dia.getDate() + deslocamento)
+    const data = `${dia.getFullYear()}-${String(dia.getMonth()+1).padStart(2,'0')}-${String(dia.getDate()).padStart(2,'0')}`
+    const livre = await (await fetch(`${API}/agenda/horarios-livres?colaboradorId=${colaboradorId}&data=${data}&duracao=${servico.duracao}`, {
+      headers: { Authorization: `Bearer ${antes.token}` },
+    })).json()
+    const hora = livre.find(h => escolha.horas.includes(h))
+    if (hora) slot = { data, hora, colaboradorId }
+   }
+   if (slot) break
   }
-  const livres = candidatos.filter((c) => !ocupados.has(`${c.data}T${c.hora}`))
-  const slot = livres[Math.floor(Math.random() * livres.length)]
   if (!slot) throw new Error('Nenhum horário livre encontrado para o teste')
 
   await checar('existe horário livre na agenda para o teste', !!slot,
@@ -253,6 +280,8 @@ try {
       input.dispatchEvent(new Event('change', { bubbles: true }))
     }
     const selects = [...document.querySelectorAll('.modal select')]
+    selects[2].value = String(slot.colaboradorId)
+    selects[2].dispatchEvent(new Event('change', { bubbles: true }))
     const selHora = selects[selects.length - 1]
     selHora.value = slot.hora
     selHora.dispatchEvent(new Event('change', { bubbles: true }))
@@ -275,9 +304,7 @@ try {
       document.body.innerText.match(/Agendamento #(\d+) criado/)?.[1]))
     agendamentosCriados.push(idCriado)
 
-    const lista = await (await fetch(`${API}/agendamentos`, {
-      headers: { Authorization: `Bearer ${antes.token}` },
-    })).json()
+    const lista = await listarRecurso('agendamentos')
     const noBanco = lista.find((a) => a.id === idCriado)
     await checar('o agendamento aparece em GET /api/agendamentos',
       noBanco?.dataHora === `${slot.data}T${slot.hora}`,
@@ -288,9 +315,7 @@ try {
   console.log('\n\x1b[1m4. PDV — venda real com baixa de estoque (RF10/RF25/RN02)\x1b[0m')
 
   // Estoque do produto alvo ANTES da venda (lido direto do banco).
-  const estoqueAntes = await (await fetch(`${API}/produtos`, {
-    headers: { Authorization: `Bearer ${antes.token}` },
-  })).json()
+  const estoqueAntes = await listarRecurso('produtos')
   const alvo = estoqueAntes.find((p) => p.quantidadeEstoque >= 3)
   const saldoAntes = alvo?.quantidadeEstoque
   if (!alvo) throw new Error('Nenhum produto com saldo suficiente para o teste de venda')
@@ -341,9 +366,7 @@ try {
   const vendaOk = await page.evaluate(() => document.body.innerText.includes('Comprovante de Venda'))
   await checar('comprovante é gerado após a venda', vendaOk)
 
-  const estoqueDepois = await (await fetch(`${API}/produtos`, {
-    headers: { Authorization: `Bearer ${antes.token}` },
-  })).json()
+  const estoqueDepois = await listarRecurso('produtos')
   const saldoDepois = estoqueDepois.find((p) => p.id === alvo.id)?.quantidadeEstoque
 
   await checar('estoque foi debitado NO BANCO (RF08)',
@@ -396,9 +419,7 @@ try {
   await clicarTexto(page, '.modal button', 'Confirmar entrada')
   await dormir(2000)
 
-  const saldoFinal = await (await fetch(`${API}/produtos`, {
-    headers: { Authorization: `Bearer ${antes.token}` },
-  })).json()
+  const saldoFinal = await listarRecurso('produtos')
   const saldoBancoFinal = saldoFinal.find((p) => p.id === alvo.id)?.quantidadeEstoque
 
   await checar('entrada de estoque foi gravada no banco',
@@ -418,8 +439,9 @@ try {
     await page.evaluate(() => document.body.innerText.includes('Acesso restrito')),
     'guarda de rota PROFILE_GUARDS no App.tsx')
 
-  const tokenSalvo = await page.evaluate(() => localStorage.getItem('petplus_token'))
-  await checar('JWT fica guardado no navegador', !!tokenSalvo && tokenSalvo.split('.').length === 3)
+  await checar('cookie HttpOnly mantém a sessão sem persistir JWT no localStorage',
+    (await page.cookies()).some(c => c.name === 'petplus_token' && c.httpOnly)
+    && await page.evaluate(() => localStorage.getItem('petplus_token')) === null)
 
   // Recarrega: a sessão deve sobreviver e os dados voltarem do banco.
   await page.goto(`${FRONT}/#/dashboard`, { waitUntil: 'networkidle2' })
@@ -429,7 +451,7 @@ try {
     await page.evaluate(() =>
       !document.body.innerText.includes('Entrar no sistema')
       && document.body.innerText.includes('Painel Gerencial')),
-    'painel recarregado usando o token guardado, sem novo login')
+    'painel recarregado usando cookie de sessão, sem novo login')
 
   const dadosRecarregados = await page.evaluate(() => {
     const el = [...document.querySelectorAll('.stat-card')]
@@ -453,16 +475,19 @@ try {
   // -------------------------------------------------------------------
   console.log('\n\x1b[1m7. Limpeza\x1b[0m')
 
+  let cancelados = 0
   for (const id of agendamentosCriados) {
     await fetch(`${API}/agendamentos/${id}/cancelar`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${antes.token}` },
       body: JSON.stringify({ motivo: 'limpeza do teste e2e' }),
     })
+    const resposta = await fetch(`${API}/agendamentos/${id}`, { headers: { Authorization: `Bearer ${antes.token}` } })
+    if (resposta.ok && (await resposta.json()).status === 'cancelado') cancelados++
   }
   await checar('agendamentos criados pelo teste foram cancelados',
-    agendamentosCriados.length === 0 || true,
-    `${agendamentosCriados.length} agendamento(s) cancelados (RN04 libera o horário)`)
+    cancelados === agendamentosCriados.length,
+    `${cancelados}/${agendamentosCriados.length} agendamento(s) cancelados (RN04 libera o horário)`)
 
 } catch (err) {
   falhou++

@@ -25,6 +25,11 @@ import { query, withTransaction } from '../db/pool.js'
 
 const ASSINATURA = '\n\n—\nPetPlus · Gestão para Petshop\nEste é um aviso automático; não responda esta mensagem.'
 
+/** Defesa para mensagens antigas ainda presentes na fila antes da correção. */
+export function ocultarLinkRecuperacao(texto) {
+  return String(texto).replace(/https?:\/\/[^\s<>"']*(?:redefinir-senha|[?&]token=)[^\s<>"']*/gi, '[LINK DE RECUPERAÇÃO OMITIDO]')
+}
+
 export const modelos = {
   lembreteAgendamento: ({ tutor, pet, servico, profissional, quando }) => ({
     assunto: `Lembrete: ${pet} tem ${servico} em 24h`,
@@ -101,18 +106,18 @@ async function gravarEmArquivo({ para, assunto, texto, enviadoEm }) {
  */
 export async function enviar({ para, assunto, texto }) {
   const enviadoEm = new Date().toISOString()
+  // Os transportes locais nunca devem armazenar credenciais, inclusive
+  // quando o agendador consumir uma mensagem anterior à atualização.
+  const textoSeguro = ocultarLinkRecuperacao(texto)
 
   if (config.email.transport === 'arquivo') {
-    const arquivo = await gravarEmArquivo({ para, assunto, texto, enviadoEm })
+    const arquivo = await gravarEmArquivo({ para, assunto, texto: textoSeguro, enviadoEm })
     logger.info({ para, assunto, arquivo }, 'e-mail gravado na caixa de saída local')
     return { destino: arquivo }
   }
 
-  // Transporte `console`: o e-mail inteiro fica no log (útil em
-  // desenvolvimento). Em produção o nível `info` já está restrito e o
-  // corpo não contém dado sensível além do que já foi pedido pelo próprio
-  // usuário (o link de redefinição).
-  logger.info({ para, assunto, texto }, '📧 e-mail (transporte local, sem provedor)')
+  // O corpo é redigido pelo logger; o transporte não entrega e-mail real.
+  logger.info({ para, assunto, texto: textoSeguro }, '📧 e-mail (transporte local, sem provedor)')
   return { destino: 'console' }
 }
 

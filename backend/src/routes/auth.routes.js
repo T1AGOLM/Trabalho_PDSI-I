@@ -3,9 +3,9 @@ import { z } from 'zod'
 import * as auth from '../services/auth.service.js'
 import { encerrarSessao, renovarSessao } from '../services/sessao.service.js'
 import {
-  autenticar, gravarCookies, lerRefreshToken, limparCookies, contexto,
+  autenticar, gravarCookies, lerRefreshToken, lerSessaoDoAccessToken, limparCookies, contexto,
 } from '../middleware/auth.js'
-import { rota } from '../middleware/errors.js'
+import { rota, ErroDeNegocio } from '../middleware/errors.js'
 import { limiteLogin, limiteRecuperacao, semCache } from '../middleware/security.js'
 import { senha as schemaSenha, email as schemaEmail, telefone as schemaTelefone, validar } from '../middleware/validar.js'
 
@@ -31,7 +31,7 @@ const respostaDeSessao = (res, sessao) => {
  *
  * Devolve o token no corpo (para clientes de API) e grava os cookies
  * httpOnly (para o navegador, que passa a não precisar guardar token no
- * localStorage — o que elimina o roubo de sessão por XSS).
+ * localStorage — o que reduz a exposição persistente a XSS).
  */
 authRoutes.post(
   '/login',
@@ -52,6 +52,14 @@ authRoutes.post(
 authRoutes.post(
   '/cadastro',
   limiteRecuperacao,
+  (req, _res, next) => {
+    if (!z.literal(true).safeParse(req.body?.consentimento).success) {
+      return next(new ErroDeNegocio('É necessário autorizar explicitamente o uso dos dados.', {
+        status: 422, codigo: 'LGPD_CONSENTIMENTO',
+      }))
+    }
+    next()
+  },
   validar({
     corpo: z.object({
       nome: z.string().trim().min(3).max(150),
@@ -59,7 +67,7 @@ authRoutes.post(
       senha: schemaSenha,
       telefone: schemaTelefone.optional(),
       endereco: z.string().trim().max(255).optional(),
-      consentimento: z.coerce.boolean(),
+      consentimento: z.literal(true),
     }),
   }),
   rota(async (req, res) => {
@@ -92,10 +100,13 @@ authRoutes.post(
 /** POST /api/auth/logout — encerra a sessão atual e limpa os cookies. */
 authRoutes.post(
   '/logout',
-  validar({ corpo: z.object({ refreshToken: z.string().min(10).max(200).optional() }).optional() }),
   rota(async (req, res) => {
-    await encerrarSessao({ refreshToken: lerRefreshToken(req) })
-    limparCookies(res)
+    // Não depende de autenticar: logout também deve funcionar com JWT vencido.
+    try {
+      await encerrarSessao({ refreshToken: lerRefreshToken(req), sessaoAccess: lerSessaoDoAccessToken(req) })
+    } finally {
+      limparCookies(res)
+    }
     res.status(200).json({ encerrada: true })
   }),
 )
@@ -138,8 +149,8 @@ authRoutes.patch(
       senhaAtual: req.body.senhaAtual,
       novaSenha: req.body.novaSenha,
     })
-    // A sessão atual continua válida, mas os cookies são reemitidos para
-    // deixar claro que as OUTRAS sessões caíram.
+    // Todas as sessões foram revogadas junto com a senha; exige novo login.
+    limparCookies(res)
     res.json(resultado)
   }),
 )

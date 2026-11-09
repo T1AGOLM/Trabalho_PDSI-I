@@ -152,8 +152,8 @@ export function traduzirErroBanco(err) {
 }
 
 /** Corpo de erro único: `{ erro, codigo?, detalhe?, campos? }`. */
-const corpoDoErro = ({ mensagem, codigo, detalhe, campos }) => ({
-  erro: mensagem,
+const corpoDoErro = ({ message, codigo, detalhe, campos }) => ({
+  erro: message,
   ...(codigo ? { codigo } : {}),
   ...(detalhe ? { detalhe } : {}),
   ...(campos ? { campos } : {}),
@@ -188,20 +188,20 @@ export function tratadorDeErros(err, req, res, _next) {
 
   // Corpo JSON malformado.
   if (err.type === 'entity.parse.failed') {
-    return res.status(400).json(corpoDoErro({ mensagem: 'Corpo da requisição não é um JSON válido.', codigo: 'JSON_INVALIDO' }))
+    return res.status(400).json(corpoDoErro({ message: 'Corpo da requisição não é um JSON válido.', codigo: 'JSON_INVALIDO' }))
   }
   // Corpo/entidade grande demais.
   if (err.type === 'entity.too.large') {
-    return res.status(413).json(corpoDoErro({ mensagem: 'Requisição maior que o limite permitido.', codigo: 'PAYLOAD_GRANDE' }))
+    return res.status(413).json(corpoDoErro({ message: 'Requisição maior que o limite permitido.', codigo: 'PAYLOAD_GRANDE' }))
   }
   // Origem bloqueada pelo CORS: é negação de acesso, não falha interna.
   if (/CORS/i.test(err.message ?? '')) {
-    return res.status(403).json(corpoDoErro({ mensagem: 'Origem não permitida.', codigo: 'CORS_BLOQUEADO' }))
+    return res.status(403).json(corpoDoErro({ message: 'Origem não permitida.', codigo: 'CORS_BLOQUEADO' }))
   }
 
   // Erro lançado com status explícito (inclusive os `Error` anotados nos repositórios).
   if (typeof err.status === 'number' && err.status >= 400 && err.status < 600) {
-    return res.status(err.status).json(corpoDoErro({ mensagem: err.message, codigo: err.codigo }))
+    return res.status(err.status).json(corpoDoErro({ message: err.message, codigo: err.codigo }))
   }
 
   logger.error(
@@ -209,7 +209,7 @@ export function tratadorDeErros(err, req, res, _next) {
     'erro não tratado',
   )
   // Nada de vazar stack/detalhe de infraestrutura na resposta.
-  res.status(500).json(corpoDoErro({ mensagem: 'Erro interno do servidor.', codigo: 'ERRO_INTERNO' }))
+  res.status(500).json(corpoDoErro({ message: 'Erro interno do servidor.', codigo: 'ERRO_INTERNO' }))
 }
 
 /** Envolve handlers async para que rejeições cheguem ao tratadorDeErros. */

@@ -6,6 +6,109 @@ backend final.
 
 ## Arquitetura em camadas
 
+### Recuperação de senha — segurança (Etapa 1)
+
+- `APP_URL` define a URL pública do frontend usada no link, independente de CORS.
+- `EXPOR_TOKEN_RECUPERACAO=false` é o padrão. Somente com `true` em ambiente
+  local/teste a resposta inclui token/link; produção ignora a flag.
+- A fila de notificações guarda apenas um aviso sem credencial. Logs redigem
+  `texto`/`mensagem`, e o transporte em arquivo mascara links de recuperação,
+  inclusive de mensagens antigas. Nenhuma migração existente foi alterada.
+- Limitação atual: os transportes `console` e `arquivo` não entregam um link
+  utilizável ao usuário. A entrega real depende do provedor de e-mail da
+  próxima etapa; não se deve anunciar este transporte local como entrega real.
+- Teste direcionado: `node --test tests/unit/recuperacao-seguranca.test.js`.
+  Usa o logger e os transportes reais, mas substitui o banco por um dublê;
+  não substitui o teste de integração com PostgreSQL.
+
+### Decisões de sessão — Etapa 1
+
+O JWT contém `sid`, identificador do registro já existente em `refresh_token`.
+Cada requisição confere se esse registro está ativo, sem criar outra tabela.
+Revogar o registro invalida o access token na próxima requisição autenticada.
+
+- Logout aceita refresh ou access token assinado e limpa cookies mesmo se o banco falhar.
+- Troca e redefinição de senha encerram **todas** as sessões, inclusive a atual,
+  na mesma transação da alteração. É necessário entrar novamente.
+- Renovação consome o refresh antigo com UPDATE condicional. Reuso revoga todas
+  as sessões do usuário. A redefinição também consome seu token atomicamente.
+- JWTs emitidos antes desta mudança, sem `sid`, exigem novo login (ou renovação).
+- Consentimento público aceita somente o booleano `true`; demais valores retornam
+  HTTP 422 com `LGPD_CONSENTIMENTO`.
+- O `sid` usa o esquema de sessões já previsto na versão atual. Bancos com o
+  histórico legado `007_backend_operacional.sql` + `008_modulos_complementares.sql`
+  precisam da nova `009_compatibilidade_backend_atual.sql`. O runner reconhece
+  esse histórico e não tenta reaplicar a outra 007 por cima dele.
+
+### Compatibilidade com o banco legado
+
+A migração 009 adiciona sessões e campos da fila, preserva os registros anteriores
+e importa o extrato de fidelidade sem recalcular os saldos dos clientes.
+A tabela antiga de fidelidade permanece preservada; seus gatilhos produtores
+são desabilitados porque o backend atual já registra os créditos. Isso evita
+concessão em duplicidade. A migração é transacional e pode ser repetida sem
+duplicar a importação. Faça backup antes de atualizar outro ambiente legado.
+
+A tela Recuperar senha agora solicita o token à API. Ela nunca anuncia um e-mail
+como entregue pelo transporte local. O botão de continuação só aparece quando
+a API devolve um token de demonstração; a validade continua sendo 60 minutos.
+
+Para testar essa continuação localmente no PowerShell, antes de iniciar a API:
+
+```powershell
+$env:EXPOR_TOKEN_RECUPERACAO="true"
+npm start
+```
+
+Sem a flag, a solicitação é registrada, mas o token não aparece na interface.
+Em produção, a flag é ignorada. O provedor real de e-mail continua pendente.
+
+### Agendas — período e profissional
+
+A Agenda do gestor e Minha Agenda consultam a semana escolhida na API. Use
+“Data da agenda”, “Semana anterior”, “Próxima semana” e “Atualizar agenda”.
+A agenda pessoal usa o ID da sessão; o gestor visualiza todos os profissionais.
+A grade do gestor também mostra reservas de meia hora, como 09:30.
+Concluir/cancelar em Minha Agenda agora chama a API e persiste no banco.
+
+O teste `tests/integration/agendas-navegador.test.js` cria um profissional
+BANHISTA exclusivo na cópia de testes e uma reserva pela interface do cliente;
+confere o mesmo ID no gestor e no responsável e testa conclusão/cancelamento.
+Os registros de teste permanecem nessa cópia para inspeção. Ele exige:
+
+- API e frontend já rodando e apontando para um banco exclusivo de testes;
+- API em `NODE_ENV=test` (o teste confere `/health`);
+- `DB_NAME` contendo `test` e `PETPLUS_BANCO_TESTE=1` no terminal do teste;
+- `FRONT_URL`, `API_URL` e `CHROME_PATH` correspondentes ao ambiente isolado.
+
+Execute: `node --test tests/integration/agendas-navegador.test.js`.
+As variáveis do terminal do teste não reconfiguram uma API que já está rodando.
+Não use este teste contra o banco da equipe. Sem opt-in, ele é ignorado.
+### Validação da Etapa 1
+
+Em `backend`: `npm test`. Para a suíte real, configure primeiro um **banco exclusivo
+de testes**, com schema e seed existentes. Seu `DB_NAME` deve conter `test`;
+defina `NODE_ENV=test` e `PETPLUS_BANCO_TESTE=1`, e execute:
+
+```text
+node --test tests/integration/seguranca-sessoes.test.js
+```
+
+A suíte real cria contas de teste identificadas por UUID e altera apenas essas
+contas. Os registros permanecem no banco de teste para inspeção. Ela não reseta
+o banco automaticamente. Sem opt-in, a suíte é explicitamente não executada.
+`npm run verificar` é diferente: **recria o banco** e só deve usar ambiente descartável.
+
+No frontend, `node --test tests/sessao.test.mjs` verifica os módulos reais com rede
+simulada; após o build, `node --test tests/sessao.e2e.mjs` exercita o navegador com
+API simulada. Esse E2E não substitui o E2E integrado existente do backend.
+Os Puppeteer dos lockfiles exigem Node 22.12+; use essa versão para validá-los.
+
+O frontend limpa sessão/cache imediatamente ao sair, cancela requisições antigas
+e descarta suas respostas. Sem rede, a limpeza local continua funcionando,
+mas a revogação no servidor não pode ser garantida. Um login novo aguarda o
+logout pendente para evitar que uma resposta antiga limpe cookies novos.
+
 ```
 src/
 ├── config/env.js           configuração central (tudo por variável de ambiente)

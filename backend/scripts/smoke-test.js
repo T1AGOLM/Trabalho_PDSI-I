@@ -15,6 +15,7 @@ const SUFIXO = String(Date.now()).slice(-6)
 
 let passou = 0
 let falhou = 0
+let pulou = 0
 
 const verde = (s) => `\x1b[32m${s}\x1b[0m`
 const vermelho = (s) => `\x1b[31m${s}\x1b[0m`
@@ -23,6 +24,11 @@ const amarelo = (s) => `\x1b[33m${s}\x1b[0m`
 async function teste(nome, fn) {
   try {
     const detalhe = await fn()
+    if (detalhe?.pulado) {
+      pulou++
+      console.log(`  ${amarelo('↷')} ${nome}: ${detalhe.pulado}`)
+      return
+    }
     passou++
     console.log(`  ${verde('✓')} ${nome}${detalhe ? `\n      ${amarelo(detalhe)}` : ''}`)
   } catch (err) {
@@ -150,12 +156,12 @@ await teste('Refresh rotaciona o token e marca o anterior como usado', async () 
   return 'refresh₂ ≠ refresh₁'
 })
 
-await teste('Reutilizar um refresh token já rotacionado derruba a família (anti-roubo)', async () => {
+await teste('Reutilizar um refresh token já rotacionado revoga todas as sessões do usuário', async () => {
   const login = await exigir('/auth/login', { metodo: 'POST', body: credenciais.COLABORADOR })
   const primeiro = await exigir('/auth/refresh', { metodo: 'POST', body: { refreshToken: login.refreshToken } })
   const reuso = await api('/auth/refresh', { metodo: 'POST', body: { refreshToken: login.refreshToken } })
   ok(reuso.status === 401 && reuso.body.codigo === 'REFRESH_REUTILIZADO', JSON.stringify(reuso.body))
-  // O token novo também cai: a família inteira é revogada.
+  // O token novo também cai: todas as sessões do usuário são revogadas.
   const depois = await api('/auth/refresh', { metodo: 'POST', body: { refreshToken: primeiro.refreshToken } })
   ok(depois.status === 401, `o token da família deveria estar revogado (status ${depois.status})`)
   return 'refresh antigo → 401 REFRESH_REUTILIZADO; família revogada'
@@ -167,6 +173,8 @@ await teste('Logout encerra a sessão e o refresh deixa de funcionar', async () 
   await exigir('/auth/logout', { metodo: 'POST', body: { refreshToken: login.refreshToken } })
   const r = await api('/auth/refresh', { metodo: 'POST', body: { refreshToken: login.refreshToken } })
   ok(r.status === 401, `refresh após logout deveria falhar (status ${r.status})`)
+  const acesso = await api('/auth/eu', { token: login.token })
+  ok(acesso.status === 401, `access token após logout deveria falhar (status ${acesso.status})`)
   return 'refresh revogado no logout'
 })
 
@@ -201,7 +209,7 @@ await teste('Senha fraca é recusada com a lista de campos (política RNF02)', a
   return r.body.campos.map((c) => `${c.campo}: ${c.mensagem}`).join('; ')
 })
 
-await teste('Recuperação de senha enfileira o e-mail e devolve token (fora de produção)', async () => {
+await teste('Recuperação registra aviso seguro; exposição exige opt-in de demonstração', async () => {
   const r = await exigir('/auth/recuperar-senha', {
     metodo: 'POST',
     body: { email: `auto-${SUFIXO}@petplus.local` },
@@ -209,14 +217,14 @@ await teste('Recuperação de senha enfileira o e-mail e devolve token (fora de 
   ok(r.enviado === true, 'deveria confirmar o envio')
   if (r.token) {
     globalThis.__tokenReset = r.token
-    return 'token devolvido para demonstração (só fora de produção)'
+    return 'token devolvido com opt-in de demonstração local'
   }
-  return 'token não exposto (produção)'
+  return 'token não exposto (padrão seguro ou produção)'
 })
 
 await teste('Redefinição consome o token, troca a senha e invalida o link', async () => {
   const email = `auto-${SUFIXO}@petplus.local`
-  if (!globalThis.__tokenReset) return 'pulado: sem token de demonstração'
+  if (!globalThis.__tokenReset) return { pulado: 'sem token de demonstração; use a suíte dedicada em banco de teste para validar redefinição' }
   await exigir('/auth/redefinir-senha', { metodo: 'POST', body: { token: globalThis.__tokenReset, senha: 'NovaSenha456' } })
   await exigir('/auth/login', { metodo: 'POST', body: { email, senha: 'NovaSenha456' } })
   const repetido = await api('/auth/redefinir-senha', { metodo: 'POST', body: { token: globalThis.__tokenReset, senha: 'OutraSenha789' } })
@@ -224,7 +232,7 @@ await teste('Redefinição consome o token, troca a senha e invalida o link', as
   return 'login com a senha nova funciona; token não pode ser reutilizado'
 })
 
-await teste('Trocar a própria senha exige a senha atual e revoga as outras sessões', async () => {
+await teste('Trocar a própria senha exige a senha atual e revoga todas as sessões', async () => {
   const email = `troca-${SUFIXO}@petplus.local`
   const criado = await exigir('/auth/cadastro', {
     metodo: 'POST',
@@ -244,12 +252,22 @@ await teste('Trocar a própria senha exige a senha atual e revoga as outras sess
   })
   const renovacao = await api('/auth/refresh', { metodo: 'POST', body: { refreshToken: criado.refreshToken } })
   ok(renovacao.status === 401, `a sessão antiga deveria cair (status ${renovacao.status})`)
+  ok((await api('/auth/eu', { token: criado.token })).status === 401, 'access token antigo deveria ser rejeitado')
   await exigir('/auth/login', { metodo: 'POST', body: { email, senha: 'PetPlus456' } })
   return 'senha trocada, sessões antigas revogadas, login novo ok'
 })
 
 // =====================================================================
 secoes('3. Autorização por perfil (RF18 / RN03 / RN10)')
+
+// As provas anteriores encerram as sessões. Os testes de autorização
+// precisam de logins novos para medir perfil (403), e não revogação (401).
+await teste('Renovar as credenciais de teste após os cenários de revogação', async () => {
+  for (const perfil of ['CLIENTE', 'COLABORADOR']) {
+    const login = await exigir('/auth/login', { metodo: 'POST', body: credenciais[perfil] })
+    tokens[perfil] = login.token
+  }
+})
 
 await teste('Cliente não acessa rotas administrativas (403 PERFIL_INSUFICIENTE)', async () => {
   const negadas = ['/clientes', '/dashboard', '/vendas', '/relatorios', '/colaboradores', '/produtos']
@@ -1034,7 +1052,7 @@ await teste('Documentação OpenAPI é servida e descreve as rotas principais', 
 
 console.log(
   `\n${'─'.repeat(60)}\n${falhou === 0 ? verde('✓') : vermelho('✗')} ` +
-  `${passou} verificação(ões) passaram${falhou ? `, ${falhou} falharam` : ''}\n`,
+  `${passou} verificação(ões) passaram${falhou ? `, ${falhou} falharam` : ''}${pulou ? `, ${pulou} não executadas` : ''}\n`,
 )
 
 if (falhou > 0) process.exitCode = 1
